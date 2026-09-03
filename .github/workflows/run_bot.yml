@@ -2,9 +2,12 @@ name: Ejecutar Prediccion SOXL
 
 on:
   schedule:
-    # Corre de lunes a viernes a las 14:30 UTC (Equivale a 10:30 AM en Nueva York / Miami)
     - cron: '30 14 * * 1-5'
-  workflow_dispatch: # Permite activar el script manualmente con un botón en GitHub
+  workflow_dispatch:
+
+# ESTAS DOS LÍNEAS LE DAN PERMISO ULTRA-SEGURO DE ESCRITURA AL ROBOT
+permissions:
+  contents: write
 
 jobs:
   build:
