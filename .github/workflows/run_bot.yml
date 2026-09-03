@@ -1,0 +1,36 @@
+name: Ejecutar Prediccion SOXL
+
+on:
+  schedule:
+    # Corre de lunes a viernes a las 14:30 UTC (Equivale a 10:30 AM en Nueva York / Miami)
+    - cron: '30 14 * * 1-5'
+  workflow_dispatch: # Permite activar el script manualmente con un botón en GitHub
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Clonar el repositorio
+      uses: actions/checkout@v4
+
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Instalar librerías
+      run: |
+        python -m pip install --upgrade pip
+        pip install yfinance pandas xgboost
+
+    - name: Ejecutar script de predicción
+      run: python script.py
+
+    - name: Guardar cambios del CSV en el repositorio
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@://github.com'
+        git add soxl_predictions.csv || true
+        git commit -m "Auto-update: Predicciones SOXL del $(date +'%Y-%m-%d')" || true
+        git push || true
