@@ -8,10 +8,10 @@ def run_prediction():
     print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Ejecutando predicción SOXL...")
     try:
         # 1. Descargar datos
-        soxl = yf.download("SOXL", period="120d", interval="5m", group_by='ticker')["SOXL"]
-        nasdaq = yf.download("^IXIC", period="120d", interval="5m", group_by='ticker')["^IXIC"]
-        sox_index = yf.download("^SOX", period="120d", interval="5m", group_by='ticker')["^SOX"]
-        vix = yf.download("^VIX", period="120d", interval="5m", group_by='ticker')["^VIX"]
+        soxl = yf.download("SOXL", period="60d", interval="5m", group_by='ticker')["SOXL"]
+        nasdaq = yf.download("^IXIC", period="60d", interval="5m", group_by='ticker')["^IXIC"]
+        sox_index = yf.download("^SOX", period="60d", interval="5m", group_by='ticker')["^SOX"]
+        vix = yf.download("^VIX", period="60d", interval="5m", group_by='ticker')["^VIX"]
 
         # 2. Features
         soxl['return_1h'] = soxl['Close'].pct_change(12)
