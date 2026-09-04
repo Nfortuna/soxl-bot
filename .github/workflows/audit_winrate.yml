@@ -1,0 +1,34 @@
+name: "Auditar Predictibilidad Viernes"
+
+on:
+  schedule:
+    # Corre todos los viernes a las 20:15 UTC (4:15 PM en Nueva York / República Dominicana)
+    # Justo al sonar la campana de cierre semanal del mercado de valores
+    - cron: '15 20 * * 5'
+  workflow_dispatch: # Permite forzar el cálculo de aciertos manualmente cuando quieras
+
+jobs:
+  audit_run:
+    name: Consolidacion de Win Rate Semanal
+    runs-on: ubuntu-latest
+    steps:
+    - name: Clonar Repositorio
+      uses: actions/checkout@v4
+
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Instalar Librerías de Análisis
+      run: pip install pandas numpy
+
+    - name: Ejecutar Auditoria Matematica
+      run: python auditar_predictibilidad.py
+
+    - name: Enviar Reporte Semanal a Telegram
+      uses: appleboy/telegram-action@master
+      with:
+        to: ${{ secrets.TELEGRAM_CHAT_ID }}
+        token: ${{ secrets.TELEGRAM_TOKEN }}
+        message_file: telegram_audit_msg.txt
