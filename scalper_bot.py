@@ -2,55 +2,82 @@ import os
 import datetime
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import xgboost as xgb
 
-def calcular_vwap(df):
-    vp = df['Close'] * df['Volume']
-    cum_vp = vp.cumsum()
-    cum_vol = df['Volume'].cumsum()
-    return cum_vp / cum_vol.replace(0, 1)
+def calcular_vwap_diario(df):
+    """Calcula el VWAP de forma vectorizada reiniciándolo desde cero cada mañana."""
+    df_copy = df.copy()
+    df_copy['Fecha'] = df_copy.index.date
+    vp = df_copy['Close'] * df_copy['Volume']
+    
+    # Vectorización rápida y eficiente sugerida
+    df_copy['Cum_VP'] = vp.groupby(df_copy['Fecha']).cumsum()
+    df_copy['Cum_Vol'] = df_copy['Volume'].groupby(df_copy['Fecha']).cumsum()
+    
+    return df_copy['Cum_VP'] / df_copy['Cum_Vol'].replace(0, 1)
+
+def calcular_atr(df, period=14):
+    """Calcula el Average True Range (ATR) para medir expansión de volatilidad."""
+    high_low = df['High'] - df['Low']
+    high_close_prev = np.abs(df['High'] - df['Close'].shift(1))
+    low_close_prev = np.abs(df['Low'] - df['Close'].shift(1))
+    
+    df_tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1)
+    true_range = df_tr.max(axis=1)
+    return true_range.rolling(period).mean()
+
+def descargar_activo_seguro(ticker, period="10d", prepost=False):
+    """Descarga datos de forma aislada y reporta fallos específicos por activo."""
+    try:
+        df = yf.download(ticker, period=period, interval="1m", prepost=prepost)
+        if df.empty:
+            print(f"⚠️ Alerta: Yahoo Finance devolvió datos vacíos para {ticker}")
+            return pd.DataFrame()
+        
+        # Corrección MultiIndex estructural si yfinance los incluye de forma nativa
+        if isinstance(df.columns, pd.MultiIndex):
+            df = df[ticker]
+            
+        # Protección segura de zona horaria sugerida
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+            
+        df.ffill(inplace=True)
+        df.bfill(inplace=True)
+        return df
+    except Exception as e:
+        print(f"❌ Error crítico al descargar o procesar el activo {ticker}: {e}")
+        return pd.DataFrame()
 
 def run_scalper():
-    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Iniciando Alerta Temprana Multivariable de Scalping SOXL...")
-    today = datetime.date.today().strftime("%Y-%m-%d")
+    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Iniciando Pro-Scalper SOXL Refactorizado...")
     
-    preds = {"Actual": 0.0, "Proyectado_10m": 0.0, "Tendencia": "Estable", "Sesgo_VWAP": "Neutro", "Impulso": "Neutro", "Senal_Alerta": "Normal"}
+    preds = {
+        "Actual": 0.0, "Proyectado_10m": 0.0, "Tendencia": "Estable", 
+        "Sesgo_VWAP": "Neutro", "Impulso": "Neutro", "Senal_Alerta": "Normal"
+    }
     es_real = False
     
-    tickers_indice = [
-        "NVDA", "MU", "AMD", "AVGO", "INTC", "AMAT", "TSM", "MRVL", "LRCX", "KLAC", "QCOM", "ASML",
-        "TXN", "ADI", "MCHP", "NXPI", "ON", "MPWR", "CRUS", "DIOD", "LSCC", "RMBS", "SLAB", "WOLF",
-        "TER", "COHR", "ENTG", "FORM", "ONTO", "MKSI"
-    ]
+    # Descargas individuales limpias y seguras con logs específicos
+    df_soxl = descargar_activo_seguro("SOXL", period="10d")
+    df_qqq = descargar_activo_seguro("QQQ", period="10d")
+    df_nvda = descargar_activo_seguro("NVDA", period="10d")
+    df_aapl = descargar_activo_seguro("AAPL", period="10d")
+    df_msft = descargar_activo_seguro("MSFT", period="10d")
     
-    pesos = {
-        "NVDA": 0.12, "MU": 0.12, "AMD": 0.12, "AVGO": 0.11, "INTC": 0.06, 
-        "AMAT": 0.06, "TSM": 0.06, "MRVL": 0.05, "LRCX": 0.05, "KLAC": 0.05, "QCOM": 0.04, "ASML": 0.02
-    }
-    for t in tickers_indice:
-        if t not in pesos: pesos[t] = 0.0077
-
-    try:
-        print("📥 Capturando ráfagas de 1 minuto de SOXL, QQQ, NVDA, AAPL y MSFT...")
-        datos = yf.download(tickers_indice, period="2d", interval="1m")
-        soxl_data = yf.download("SOXL", period="2d", interval="1m")
-        qqq_data = yf.download("QQQ", period="2d", interval="1m")
-        nvda_data = yf.download("NVDA", period="2d", interval="1m")
-        aapl_data = yf.download("AAPL", period="2d", interval="1m")
-        msft_data = yf.download("MSFT", period="2d", interval="1m")
-        
-        if not soxl_data.empty and not qqq_data.empty and not nvda_data.empty:
-            df_soxl = soxl_data["SOXL"] if isinstance(soxl_data.columns, pd.MultiIndex) else soxl_data
-            df_qqq = qqq_data["QQQ"] if isinstance(qqq_data.columns, pd.MultiIndex) else qqq_data
-            df_nvda = nvda_data["NVDA"] if isinstance(nvda_data.columns, pd.MultiIndex) else nvda_data
-            df_aapl = aapl_data["AAPL"] if isinstance(aapl_data.columns, pd.MultiIndex) else aapl_data
-            df_msft = msft_data["MSFT"] if isinstance(msft_data.columns, pd.MultiIndex) else msft_data
+    # Validar que tengamos el bloque completo para cruzar correlaciones
+    if not df_soxl.empty and not df_qqq.empty and not df_nvda.empty and not df_aapl.empty and not df_msft.empty:
+        try:
+            # Sincronizar índices de tiempo cruzado mediante un reindexado limpio al de SOXL
+            df_qqq = df_qqq.reindex(df_soxl.index, method='ffill')
+            df_nvda = df_nvda.reindex(df_soxl.index, method='ffill')
+            df_aapl = df_aapl.reindex(df_soxl.index, method='ffill')
+            df_msft = df_msft.reindex(df_soxl.index, method='ffill')
             
-            for df in [df_soxl, df_qqq, df_nvda, df_aapl, df_msft]:
-                df.index = df.index.tz_localize(None)
-            
-            # --- 1. INDICADORES ---
-            df_soxl['VWAP'] = calcular_vwap(df_soxl)
+            # --- CÁLCULO DE INDICADORES ---
+            df_soxl['VWAP'] = calcular_vwap_diario(df_soxl)
+            df_soxl['ATR'] = calcular_atr(df_soxl, period=14)
             df_soxl['EMA_9'] = df_soxl['Close'].ewm(span=9, adjust=False).mean()
             df_soxl['EMA_21'] = df_soxl['Close'].ewm(span=21, adjust=False).mean()
             
@@ -58,8 +85,9 @@ def run_scalper():
             ema_26 = df_soxl['Close'].ewm(span=26, adjust=False).mean()
             df_soxl['MACD_Line'] = ema_12 - ema_26
             df_soxl['MACD_Signal'] = df_soxl['MACD_Line'].ewm(span=9, adjust=False).mean()
+            df_soxl['MACD_Hist'] = df_soxl['MACD_Line'] - df_soxl['MACD_Signal']
             
-            # --- 2. CORRELACIÓN CRUZADA ---
+            # Flujos del Sistema de Alerta Temprana (Big Tech)
             df_soxl['qqq_trend_1m'] = df_qqq['Close'].pct_change(1)
             df_soxl['nvda_trend_1m'] = df_nvda['Close'].pct_change(1)
             df_soxl['aapl_trend_1m'] = df_aapl['Close'].pct_change(1)
@@ -67,16 +95,18 @@ def run_scalper():
             
             df_soxl['Target_10m'] = df_soxl['Close'].shift(-10)
             
+            # Matriz multivariable optimizada reduciendo features redundantes
             columnas_features = [
-                'Close', 'Volume', 'VWAP', 'EMA_9', 'EMA_21', 'MACD_Line', 'MACD_Signal',
+                'Close', 'Volume', 'VWAP', 'ATR', 'EMA_9', 'EMA_21', 'MACD_Hist',
                 'qqq_trend_1m', 'nvda_trend_1m', 'aapl_trend_1m', 'msft_trend_1m'
             ]
             X = df_soxl[columnas_features].dropna()
             y = df_soxl['Target_10m'].loc[X.index]
             
-            if len(X) > 10:
+            if len(X) > 50:
+                # Mitigación de Overfitting: max_depth reducido a 3 para evitar memorizar ruido de corto plazo
                 dtrain = xgb.DMatrix(X, label=y)
-                model = xgb.train({'objective':'reg:squarederror', 'max_depth':5, 'eta':0.1}, dtrain, num_boost_round=35)
+                model = xgb.train({'objective':'reg:squarederror', 'max_depth':3, 'eta':0.1}, dtrain, num_boost_round=30)
                 
                 ultimo_bloque = df_soxl[columnas_features].tail(1)
                 dlast = xgb.DMatrix(ultimo_bloque)
@@ -85,55 +115,62 @@ def run_scalper():
                 preds["Proyectado_10m"] = round(float(model.predict(dlast)[0]), 2)
                 preds["Tendencia"] = "Alza" if preds["Proyectado_10m"] > preds["Actual"] else "Baja"
                 
-                # --- 3. AUDITORÍA EN VIVO ---
                 ultimo_precio = preds["Actual"]
                 ultimo_vwap = round(float(ultimo_bloque['VWAP'].iloc[0]), 2)
                 ultima_ema9 = float(ultimo_bloque['EMA_9'].iloc[0])
                 ultima_ema21 = float(ultimo_bloque['EMA_21'].iloc[0])
-                ultimo_macd = float(ultimo_bloque['MACD_Line'].iloc[0])
-                ultima_signal = float(ultimo_bloque['MACD_Signal'].iloc[0])
+                ultimo_macd_hist = float(ultimo_bloque['MACD_Hist'].iloc[0])
+                ultimo_atr = float(ultimo_bloque['ATR'].iloc[0])
                 
                 preds["Sesgo_VWAP"] = "COMPRADORES (Alcista)" if ultimo_precio > ultimo_vwap else "VENDEDORES (Bajista)"
                 
-                if ultimo_precio > ultima_ema9 and ultima_ema9 > ultima_ema21 and ultimo_macd > ultima_signal:
+                if ultimo_precio > ultima_ema9 and ultima_ema9 > ultima_ema21 and ultimo_macd_hist > 0:
                     preds["Impulso"] = "FUERTE IMPULSO ALCISTA 🔥"
-                elif ultimo_precio < ultima_ema9 and ultima_ema9 < ultima_ema21 and ultimo_macd < ultima_signal:
+                elif ultimo_precio < ultima_ema9 and ultima_ema9 < ultima_ema21 and ultimo_macd_hist < 0:
                     preds["Impulso"] = "FUERTE PRESIÓN BAJISTA 🩸"
                 else:
-                    preds["Impulso"] = "Compresión / Rango Transicional ⏳"
+                    preds["Impulso"] = "Compresión de Rango Transicional ⏳"
                     
-                ultimo_retorno_qqq = float(df_qqq['Close'].pct_change(1).iloc[-1])
-                ultimo_retorno_nvda = float(df_nvda['Close'].pct_change(1).iloc[-1])
+                # Alerta matricial de confirmación rápida por volumen/ATR
+                ret_qqq = float(df_qqq['Close'].pct_change(1).iloc[-1])
+                ret_nvda = float(df_nvda['Close'].pct_change(1).iloc[-1])
+                ret_aapl = float(df_aapl['Close'].pct_change(1).iloc[-1])
+                ret_msft = float(df_msft['Close'].pct_change(1).iloc[-1])
                 
-                if ultimo_retorno_qqq > 0.0005 and ultimo_retorno_nvda > 0.001:
-                    preds["Senal_Alerta"] = "⚡ ALERTA DE RUPTURA ALCISTA (Arrastre NVDA/QQQ)"
-                elif ultimo_retorno_qqq < -0.0005 and ultimo_retorno_nvda < -0.001:
-                    preds["Senal_Alerta"] = "⚠️ ALERTA DE DESPLOME INMINENTE (Fuga Institucional)"
+                coincidencia_alcista = ret_qqq > 0 and ret_nvda > 0 and ret_aapl > 0 and ret_msft > 0
+                coincidencia_bajista = ret_qqq < 0 and ret_nvda < 0 and ret_aapl < 0 and ret_msft < 0
+                rango_vela_actual = np.abs(float(df_soxl['Close'].iloc[-1]) - float(df_soxl['Open'].iloc[-1]))
+                
+                if coincidencia_alcista and rango_vela_actual > (ultimo_atr * 1.2):
+                    preds["Senal_Alerta"] = "🚀 RUPTURA ALCISTA CONFIRMADA POR RANGOS ATR"
+                elif coincidencia_bajista and rango_vela_actual > (ultimo_atr * 1.2):
+                    preds["Senal_Alerta"] = "🚨 RUPTURA BAJISTA CON EXPANSIÓN ATR"
                 else:
-                    preds["Senal_Alerta"] = "Flujo de Arbitraje Normal"
+                    preds["Senal_Alerta"] = "Flujo Normal (Filtro ATR Activo)"
                     
                 es_real = True
-
-    except Exception as e:
-        print(f"❌ Error en scalper: {e}")
-        
+        except Exception as e:
+            print(f"❌ Error en el bucle de procesamiento técnico: {e}")
+            
+    # Formateo estructurado del mensaje en Telegram
     hora_actual = datetime.datetime.now().strftime("%I:%M %p")
-    tipo_data = "Indicadores Estratégicos Sincronizados" if es_real else "⚠️ Valores de Contingencia"
+    tipo_data = "Indicadores Estratégicos Consolidados" if es_real else "⚠️ Valores de Contingencia por Fallo"
     icon_tendencia = "🟢" if preds["Tendencia"] == "Alza" else "🔴"
     
     with open("telegram_scalper_msg.txt", "w", encoding="utf-8") as f:
         f.write(
-            f"⚡ *SCALPER MULTIVARIABLE SOXL* ({hora_actual} EST)\n"
+            f"⚡ *PRO-SCALPER REFACTORIZADO* ({hora_actual} EST)\n"
             f"🔹 Estado: {tipo_data}\n"
-            f"{icon_tendencia} *Micro-Tendencia (10m):* {preds['Tendencia']}\n\n"
-            f"💵 *Precio Actual:* ${preds['Actual']}\n"
-            f"🎯 *Proyección 10 Minutos:* ${preds['Proyectado_10m']}\n\n"
-            f"📊 *Estrategia Institucional:*\n"
-            f"▪️ Control: {preds['Sesgo_VWAP']}\n"
-            f"▪️ Impulso: {preds['Impulso']}\n\n"
-            f"🚨 *Alerta Temprana (Correlación):*\n"
+            f"{icon_tendencia} *Señal Probabilística (10m):* {preds['Tendencia']}\n\n"
+            f"💵 *Precio Actual SOXL:* ${preds['Actual']}\n"
+            f"🎯 *Proyección IA Estimada:* ${preds['Proyectado_10m']}\n\n"
+            f"📊 *Estrategia Intradía (VWAP Diario):*\n"
+            f"▪️ Control del Día: {preds['Sesgo_VWAP']}\n"
+            f"▪️ Impulso Reciente: {preds['Impulso']}\n\n"
+            f"🚨 *Filtro de Rupturas (ATR 14):*\n"
             f"▪️ {preds['Senal_Alerta']}\n"
         )
+    print("📝 Archivo 'telegram_scalper_msg.txt' guardado exitosamente con la arquitectura limpia.")
 
 if __name__ == "__main__":
     run_scalper()
