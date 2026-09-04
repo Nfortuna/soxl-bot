@@ -4,24 +4,23 @@ import requests
 import yfinance as yf
 import pandas as pd
 import xgboost as xgb
-
 def enviar_telegram(mensaje):
     token = os.getenv("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if token and chat_id:
-        url = f"https://telegram.org{token}/sendMessage"
-        payload = {"chat_id": chat_id, "text": mensaje, "parse_mode": "Markdown"}
+        # Separamos el token limpiamente en el payload para evitar el bloqueo de asteriscos de GitHub
+        url = "https://telegram.org" + str(token) + "/sendMessage"
+        payload = {"chat_id": str(chat_id), "text": mensaje, "parse_mode": "Markdown"}
         try:
-            r = requests.post(url, json=payload)
+            r = requests.post(url, json=payload, timeout=10)
             if r.status_code == 200:
                 print("✉️ Mensaje enviado con éxito a Telegram.")
             else:
-                print(f"❌ Error de Telegram al enviar mensaje: {r.text}")
+                print(f"❌ Error de Telegram al enviar mensaje: {r.status_code}")
         except Exception as e:
-            print(f"❌ No se pudo conectar con Telegram: {e}")
+            print(f"❌ No se pudo conectar con Telegram.")
     else:
         print("⚠️ Faltan las credenciales de Telegram en las variables de entorno.")
-
 def run_prediction():
     print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Iniciando proceso de predicción SOXL...")
     csv_filename = "soxl_predictions.csv"
