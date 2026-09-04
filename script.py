@@ -41,7 +41,6 @@ def run_prediction():
                     for target in ['Low','High','Close']:
                         preds[target] = round(float(models[target].predict(dlast)), 2)
                     es_real = True
-
     except Exception as e:
         print(f"⚠️ Nota de contingencia bursátil: {e}")
         
@@ -51,18 +50,17 @@ def run_prediction():
     pred_df = pd.DataFrame([preds], index=[today])
     file_exists = os.path.exists(csv_filename)
     pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
-    print(f"💾 Archivo escrito con éxito: {csv_filename}")
-    
+    print(f"💾 Archivo escrito con éxito: {csv_filename}")   
     # --- CREAR REPORTE PARA GITHUB ACTIONS ---
-    tipo_data = "📊 Datos de Mercado Reales" if es_real else "⚠️ Valores Base de Contingencia"
+    tipo_data = "Datos de Mercado Reales" if es_real else "Valores Base de Contingencia"
     with open("telegram_msg.txt", "w", encoding="utf-8") as f:
         f.write(
-            f"🤖 *Predicción SOXL Activa*\n"
+            f"🤖 Predicción SOXL Activa\n"
             f"📅 Fecha: {today}\n"
             f"🔹 Estado: {tipo_data}\n\n"
-            f"📈 *High estimado:* ${preds['High']}\n"
-            f"📉 *Low estimado:* ${preds['Low']}\n"
-            f"🏁 *Close estimado:* ${preds['Close']}\n\n"
+            f"📈 High estimado: {preds['High']}\n"
+            f"📉 Low estimado: {preds['Low']}\n"
+            f"🏁 Close estimado: {preds['Close']}\n\n"
             f"💾 Historial actualizado en GitHub."
         )
     print("📝 Archivo de texto 'telegram_msg.txt' generado para el bot nativo.")
