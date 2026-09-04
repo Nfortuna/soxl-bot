@@ -5,54 +5,100 @@ import pandas as pd
 import xgboost as xgb
 
 def run_prediction():
-    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Iniciando proceso de predicción SOXL...")
+    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Iniciando predicción SOXL con el Índice Completo (30 Activos)...")
     csv_filename = "soxl_predictions.csv"
     today = datetime.date.today().strftime("%Y-%m-%d")
     
-    # Valores base de contingencia (Mercado cerrado o fin de semana)
-    preds = {"Low": 105.44, "High": 116.29, "Close": 113.22}
+    # Valores de contingencia base incluyendo el nuevo campo 'Real'
+    preds = {"Low": 105.44, "High": 116.29, "Close": 113.22, "Real": 112.50}
     es_real = False
     
-    try:
-        print("📥 Descargando datos desde Yahoo Finance...")
-        soxl = yf.download("SOXL", period="60d", interval="5m", group_by='ticker')
-        
-        if not soxl.empty:
-            df_soxl = soxl["SOXL"] if isinstance(soxl.columns, pd.MultiIndex) else soxl
-            
-            if len(df_soxl) > 50:
-                print("📊 Datos de mercado encontrados. Calculando indicadores...")
-                df_soxl['return_1h'] = df_soxl['Close'].pct_change(12)
-                df_soxl['vol_ratio'] = df_soxl['Volume'].rolling(12).sum() / df_soxl['Volume'].rolling(78).mean()
-
-                daily = df_soxl.resample('1D').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'}).dropna()
-                
-                if len(daily) > 5:
-                    X_train = daily[['Open']].dropna()
-                    y_train = daily[['Low','High','Close']].loc[X_train.index]
-                    
-                    models = {}
-                    for target in ['Low','High','Close']:
-                        dtrain = xgb.DMatrix(X_train, label=y_train[target])
-                        model = xgb.train({'objective':'reg:squarederror', 'max_depth':3}, dtrain, num_boost_round=20)
-                        models[target] = model
-                    
-                    dlast = xgb.DMatrix(X_train.tail(1))
-                    for target in ['Low','High','Close']:
-                        preds[target] = round(float(models[target].predict(dlast)), 2)
-                    es_real = True
-    except Exception as e:
-        print(f"⚠️ Nota de contingencia bursátil: {e}")
-        
-    print(f"🔮 Predicción final: {preds}")
+    # Lista oficializada y depurada de los 30 componentes del ICE Semiconductor Index
+    tickers_indice = [
+        "NVDA", "MU", "AMD", "AVGO", "INTC", "AMAT", "TSM", "MRVL", "LRCX", "KLAC", "QCOM", "ASML",
+        "TXN", "ADI", "MCHP", "NXPI", "ON", "MPWR", "CRUS", "DIOD", "LSCC", "RMBS", "SLAB", "WOLF",
+        "TER", "COHR", "ENTG", "FORM", "ONTO", "MKSI"
+    ]
     
-    # Guardar en el historial CSV
+    # Ponderaciones aproximadas normalizadas para el cálculo matemático del valor "Real"
+    # Dando mayor peso a los pesos pesados del sector
+    pesos = {
+        "NVDA": 0.12, "MU": 0.12, "AMD": 0.12, "AVGO": 0.11, 
+        "INTC": 0.06, "AMAT": 0.06, "TSM": 0.06, "MRVL": 0.05, 
+        "LRCX": 0.05, "KLAC": 0.05, "QCOM": 0.04, "ASML": 0.02
+    }
+    # Completar el resto de las 18 empresas con un peso equitativo del 0.0077 (para sumar 1.0 en total)
+    for t in tickers_indice:
+        if t not in pesos:
+            pesos[t] = 0.0077
+
+    try:
+        print("📥 Descargando historial de los 30 activos simultáneamente...")
+        datos = yf.download(tickers_indice, period="60d", interval="5m", group_by='ticker')
+        soxl_data = yf.download("SOXL", period="60d", interval="5m", group_by='ticker')
+        
+        if not datos.empty and not soxl_data.empty:
+            df_soxl = soxl_data["SOXL"] if isinstance(soxl_data.columns, pd.MultiIndex) else soxl_data
+            
+            print("🧮 Ensamblando la tendencia integrada de los 30 componentes...")
+            retornos_componentes = []
+            retornos_actuales_ponderados = []
+            
+            for ticker in tickers_indice:
+                if ticker in datos.columns.levels if isinstance(datos.columns, pd.MultiIndex) else ticker in datos.columns:
+                    df_t = datos[ticker] if isinstance(datos.columns, pd.MultiIndex) else datos
+                    retorno_1h = df_t['Close'].pct_change(12)
+                    retornos_componentes.append(retorno_1h)
+                    
+                    # Para el cálculo "Real" del día de hoy, tomamos la última variación de la primera hora
+                    if not df_t.empty:
+                        ultima_variacion_accion = float(df_t['Close'].pct_change(12).iloc[-1])
+                        retornos_actuales_ponderados.append(ultima_variacion_accion * pesos[ticker])
+            
+            # Combinamos los retornos históricos para entrenar XGBoost
+            df_retornos_historicos = pd.concat(retornos_componentes, axis=1).mean(axis=1)
+            
+            df_soxl['index_trend_1h'] = df_retornos_historicos
+            df_soxl['vol_ratio'] = df_soxl['Volume'].rolling(12).sum() / df_soxl['Volume'].rolling(78).mean()
+            
+            daily = df_soxl.resample('1D').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
+            daily['index_trend'] = df_soxl['index_trend_1h'].resample('1D').last()
+            daily['vol_ratio'] = df_soxl['vol_ratio'].resample('1D').last()
+            
+            X_train = daily[['Open', 'index_trend', 'vol_ratio']].dropna()
+            y_train = daily[['Low','High','Close']].loc[X_train.index]
+            
+            if len(X_train) > 5:
+                print("🧠 Entrenando los modelos XGBoost...")
+                models = {}
+                for target in ['Low','High','Close']:
+                    dtrain = xgb.DMatrix(X_train, label=y_train[target])
+                    model = xgb.train({'objective':'reg:squarederror', 'max_depth':4, 'eta':0.1}, dtrain, num_boost_round=30)
+                    models[target] = model
+                
+                dlast = xgb.DMatrix(X_train.tail(1))
+                for target in ['Low','High','Close']:
+                    preds[target] = round(float(models[target].predict(dlast)), 2)
+                
+                # --- CÁLCULO DEL PRECIO REAL EN BASE A COMPONENTES ---
+                precio_apertura_soxl = float(df_soxl['Open'].resample('1D').first().iloc[-1])
+                variacion_mercado_30 = sum(retornos_actuales_ponderados)
+                # Aplicamos el apalancamiento 3X al movimiento calculado de las 30 empresas
+                preds["Real"] = round(precio_apertura_soxl * (1 + (variacion_mercado_30 * 3)), 2)
+                es_real = True
+
+    except Exception as e:
+        print(f"⚠️ Nota de contingencia (Procesando con pesos base): {e}")
+        
+    print(f"🔮 Entregable Final: {preds}")
+    
+    # Guardar en el archivo CSV histórico
     pred_df = pd.DataFrame([preds], index=[today])
     file_exists = os.path.exists(csv_filename)
     pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
-    print(f"💾 Archivo escrito con éxito: {csv_filename}")   
-    # --- CREAR REPORTE PARA GITHUB ACTIONS ---
-    tipo_data = "Datos de Mercado Reales" if es_real else "Valores Base de Contingencia"
+    
+    # Formatear reporte para el mensaje de Telegram
+    tipo_data = "Datos del Índice Completo (30 componentes)" if es_real else "Valores Base de Contingencia"
     with open("telegram_msg.txt", "w", encoding="utf-8") as f:
         f.write(
             f"🤖 Predicción SOXL Activa\n"
@@ -60,10 +106,10 @@ def run_prediction():
             f"🔹 Estado: {tipo_data}\n\n"
             f"📈 High estimado: {preds['High']}\n"
             f"📉 Low estimado: {preds['Low']}\n"
-            f"🏁 Close estimado: {preds['Close']}\n\n"
-            f"💾 Historial actualizado en GitHub."
+            f"🏁 Close estimado: {preds['Close']}\n"
+            f"📊 Real (30 Empresas): {preds['Real']}\n\n"
+            f"💾 Historial de 30 activos actualizado en GitHub."
         )
-    print("📝 Archivo de texto 'telegram_msg.txt' generado para el bot nativo.")
 
 if __name__ == "__main__":
     run_prediction()
