@@ -1,11 +1,10 @@
-name: Ejecutar Prediccion SOXL
+name: "Ejecutar Prediccion SOXL Definitivo"
 
 on:
   schedule:
     - cron: '30 14 * * 1-5'
   workflow_dispatch:
 
-# ESTAS DOS LÍNEAS LE DAN PERMISO ULTRA-SEGURO DE ESCRITURA AL ROBOT
 permissions:
   contents: write
 
@@ -25,9 +24,12 @@ jobs:
     - name: Instalar librerías
       run: |
         python -m pip install --upgrade pip
-        pip install yfinance pandas xgboost
+        pip install yfinance pandas xgboost requests
 
     - name: Ejecutar script de predicción
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python script.py
 
     - name: Guardar cambios del CSV en el repositorio
@@ -35,5 +37,5 @@ jobs:
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@://github.com'
         git add soxl_predictions.csv || true
-        git commit -m "Auto-update: Predicciones SOXL del $(date +'%Y-%m-%d')" || true
+        git commit -m "Auto-update: Predicciones SOXL" || true
         git push || true
