@@ -42,5 +42,5 @@ jobs:
       with:
         to: ${{ secrets.TELEGRAM_CHAT_ID }}
         token: ${{ secrets.TELEGRAM_TOKEN }}
-        # Cargamos el archivo de texto directamente usando la directiva file de la acción
-        file: telegram_msg.txt
+        # Cambiado 'file' por el comando correcto: 'message_file'
+        message_file: telegram_msg.txt
