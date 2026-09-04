@@ -9,10 +9,19 @@ def run_prediction():
     print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Iniciando predicción SOXL con Indicadores Avanzados (Modo: {modo})...")
     
     csv_filename = "soxl_predictions.csv"
-    today = datetime.date.today().strftime("%Y-%m-%d")
     
-    # Valores base de contingencia seguros por si falla el entrenamiento del modelo
-    preds = {"Low": 25.50, "High": 28.90, "Close": 27.20, "Real": 26.80, "Close Real": 27.10, "Tendencia": "Alza"}
+    # 1. IDENTIFICACIÓN DINÁMICA DE LA FECHA ACTUAL DE MERCADO
+    # Descargamos una sola vela rápida de SOXL para ver cuál es el día real activo en Wall Street ahora mismo
+    try:
+        test_df = yf.download("SOXL", period="1d", interval="5m")
+        today = test_df.index[-1].strftime('%Y-%m-%d')
+    except Exception:
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        
+    print(f"📅 Fecha operativa identificada para el análisis: {today}")
+    
+    # Valores base de contingencia (Cambiados a números únicos para detectar fallos drásticos de red)
+    preds = {"Low": 1.0, "High": 1.0, "Close": 1.0, "Real": 1.0, "Close Real": 1.0, "Tendencia": "Estable"}
     es_real = False
     
     tickers_indice = [
@@ -29,54 +38,65 @@ def run_prediction():
         if t not in pesos: pesos[t] = 0.0077
 
     try:
-        print("📥 Descargando datos desde Yahoo Finance...")
+        print("📥 Descargando paquete de datos consolidado desde Yahoo Finance...")
         incluir_premarket = True if modo == "APERTURA" else False
         
-        datos = yf.download(tickers_indice, period="60d", interval="5m", group_by='ticker', prepost=incluir_premarket)
-        soxl_data = yf.download("SOXL", period="60d", interval="5m", group_by='ticker', prepost=incluir_premarket)
-        nasdaq_data = yf.download("^IXIC", period="60d", interval="5m", group_by='ticker', prepost=incluir_premarket)
-        vix_data = yf.download("^VIX", period="60d", interval="5m", group_by='ticker', prepost=incluir_premarket)
+        datos = yf.download(tickers_indice, period="45d", interval="5m", group_by='ticker', prepost=incluir_premarket)
+        soxl_data = yf.download("SOXL", period="45d", interval="5m", group_by='ticker', prepost=incluir_premarket)
+        nasdaq_data = yf.download("^IXIC", period="45d", interval="5m", group_by='ticker', prepost=incluir_premarket)
+        vix_data = yf.download("^VIX", period="45d", interval="5m", group_by='ticker', prepost=incluir_premarket)
         
-        if not datos.empty and not soxl_data.empty and not nasdaq_data.empty and not vix_data.empty:
+        if not datos.empty and not soxl_data.empty:
             df_soxl = soxl_data["SOXL"] if isinstance(soxl_data.columns, pd.MultiIndex) else soxl_data
             df_nasdaq = nasdaq_data["^IXIC"] if isinstance(nasdaq_data.columns, pd.MultiIndex) else nasdaq_data
             df_vix = vix_data["^VIX"] if isinstance(vix_data.columns, pd.MultiIndex) else vix_data
             
-            # Determinar qué fecha procesar de forma segura
-            fechas_disponibles = df_soxl.index.strftime('%Y-%m-%d').unique()
-            if today not in fechas_disponibles:
-                today = fechas_disponibles[-1] # Forzar el último día con datos reales
-                
-            print(f"📊 Procesando sesión correspondiente a la fecha: {today}")
-            hoy_soxl = df_soxl.loc[df_soxl.index.strftime('%Y-%m-%d') == today]
+            # Localizar de forma segura las filas del día operativo quitando la zona horaria del índice
+            df_soxl.index = df_soxl.index.tz_localize(None)
+            hoy_soxl = df_soxl[df_soxl.index.strftime('%Y-%m-%d') == today]
+            
+            # Si sigue vacío por desfase horaria extrema, forzar el último bloque de datos del dataframe
+            if hoy_soxl.empty:
+                today = df_soxl.index[-1].strftime('%Y-%m-%d')
+                hoy_soxl = df_soxl[df_soxl.index.strftime('%Y-%m-%d') == today]
+            
+            print(f"📊 Extrayendo métricas intradía para la fecha: {today} (Registros hoy: {len(hoy_soxl)})")
             
             variacion_ponderada_actual = 0.0
             proyeccion_ponderada_cierre = 0.0
             retornos_componentes = []
             
             for ticker in tickers_indice:
-                if ticker in datos.columns.levels if isinstance(datos.columns, pd.MultiIndex) else ticker in datos.columns:
-                    df_t = datos[ticker] if isinstance(datos.columns, pd.MultiIndex) else datos
-                    retornos_componentes.append(df_t['Close'].pct_change(12))
+                # Comprobar la existencia del ticker en la estructura descargada de yfinance
+                if isinstance(datos.columns, pd.MultiIndex) and ticker in datos.columns.levels[0]:
+                    df_t = datos[ticker].copy()
+                else:
+                    df_t = datos.copy()
                     
-                    hoy_t = df_t.loc[df_t.index.strftime('%Y-%m-%d') == today]
+                df_t.index = df_t.index.tz_localize(None)
+                retornos_componentes.append(df_t['Close'].pct_change(12))
+                
+                hoy_t = df_t[df_t.index.strftime('%Y-%m-%d') == today]
+                
+                if len(hoy_t) >= 2:
+                    precio_apertura_t = float(hoy_t['Open'].iloc[0])
+                    precio_actual_t = float(hoy_t['Close'].iloc[-1])
                     
-                    # VALIDACIÓN DE SEGURIDAD CRÍTICA: Asegurarse de tener al menos 2 filas para el cálculo intradía
-                    if len(hoy_t) >= 2:
-                        precio_apertura_t = float(hoy_t['Open'].iloc[0])
-                        precio_actual_t = float(hoy_t['Close'].iloc[-1])
-                        
-                        var_actual_t = (precio_actual_t - precio_apertura_t) / precio_apertura_t
-                        variacion_ponderada_actual += (var_actual_t * pesos[ticker])
-                        
-                        cambio_reciente = (precio_actual_t - float(hoy_t['Close'].iloc[-2])) / float(hoy_t['Close'].iloc[-2])
-                        proyeccion_cierre_t = precio_actual_t * (1 + cambio_reciente * 6)
-                        var_proyectada_t = (proyeccion_cierre_t - precio_apertura_t) / precio_apertura_t
-                        proyeccion_ponderada_cierre += (var_proyectada_t * pesos[ticker])
+                    var_actual_t = (precio_actual_t - precio_apertura_t) / precio_apertura_t
+                    variacion_ponderada_actual += (var_actual_t * pesos[ticker])
+                    
+                    cambio_reciente = (precio_actual_t - float(hoy_t['Close'].iloc[-2])) / float(hoy_t['Close'].iloc[-2])
+                    proyeccion_cierre_t = precio_actual_t * (1 + cambio_reciente * 6)
+                    var_proyectada_t = (proyeccion_cierre_t - precio_apertura_t) / precio_apertura_t
+                    proyeccion_ponderada_cierre += (var_proyectada_t * pesos[ticker])
             
+            # --- CONSTRUCCIÓN SINTÉTICA DE LA IA ---
             df_retornos_historicos = pd.concat(retornos_componentes, axis=1).mean(axis=1)
             df_soxl['index_trend_1h'] = df_retornos_historicos
             df_soxl['vol_ratio'] = df_soxl['Volume'].rolling(12).sum() / df_soxl['Volume'].rolling(78).mean()
+            
+            df_nasdaq.index = df_nasdaq.index.tz_localize(None)
+            df_vix.index = df_vix.index.tz_localize(None)
             df_soxl['nasdaq_trend'] = df_nasdaq['Close'].pct_change(12)
             df_soxl['vix_level'] = df_vix['Close']
             
@@ -93,7 +113,7 @@ def run_prediction():
                 models = {}
                 for target in ['Low','High','Close']:
                     dtrain = xgb.DMatrix(X_train, label=y_train[target])
-                    model = xgb.train({'objective':'reg:squarederror', 'max_depth':5}, dtrain, num_boost_round=30)
+                    model = xgb.train({'objective':'reg:squarederror', 'max_depth':4}, dtrain, num_boost_round=25)
                     models[target] = model
                 
                 dlast = xgb.DMatrix(X_train.tail(1))
@@ -108,11 +128,11 @@ def run_prediction():
                     es_real = True
 
     except Exception as e:
-        print(f"❌ Fallo en procesamiento matemático controlado: {e}")
+        print(f"❌ Excepción crítica capturada en consola: {e}")
         
-    print(f"🔮 Valores Finales de la Ejecución: {preds}")
+    print(f"🔮 Valores Calculados del Modelo: {preds}")
     
-    # Escribir fila de datos en el CSV
+    # Inserción de la nueva fila de datos reales en el CSV histórico
     id_registro = f"{today}_{modo}"
     pred_df = pd.DataFrame([preds], index=[id_registro])
     file_exists = os.path.exists(csv_filename)
@@ -120,7 +140,7 @@ def run_prediction():
     
     encabezado = "☀️ *REPORTE PRE-MERCADO SOXL*" if modo == "APERTURA" else "📉 *REPORTE PRE-CIERRE SOXL*"
     icon_tendencia = "🟢" if preds["Tendencia"] == "Alza" else "🔴"
-    tipo_data = "Cálculo Puro Subyacente (30 Empresas)" if es_real else "⚠️ Valores de Contingencia Ajustados"
+    tipo_data = "Cálculo Real Basado en 30 Empresas" if es_real else "⚠️ Valores de Contingencia Activados por Error"
     
     with open("telegram_msg.txt", "w", encoding="utf-8") as f:
         f.write(
@@ -133,7 +153,7 @@ def run_prediction():
             f"🏁 Close estimado (IA): {preds['Close']}\n"
             f"📊 Real (30 Empresas): {preds['Real']}\n"
             f"🎯 Close Real (Proyección 30): {preds['Close Real']}\n\n"
-            f"💾 Estructura blindada actualizada en GitHub."
+            f"💾 Base de datos unificada en GitHub."
         )
 
 if __name__ == "__main__":
