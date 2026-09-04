@@ -9,25 +9,22 @@ def run_prediction():
     csv_filename = "soxl_predictions.csv"
     today = datetime.date.today().strftime("%Y-%m-%d")
     
-    # Valores de contingencia base incluyendo el nuevo campo 'Real'
-    preds = {"Low": 105.44, "High": 116.29, "Close": 113.22, "Real": 112.50}
+    # Valores de contingencia base incluyendo las nuevas métricas
+    preds = {"Low": 105.44, "High": 116.29, "Close": 113.22, "Real": 112.50, "Close Real": 112.90}
     es_real = False
     
-    # Lista oficializada y depurada de los 30 componentes del ICE Semiconductor Index
     tickers_indice = [
         "NVDA", "MU", "AMD", "AVGO", "INTC", "AMAT", "TSM", "MRVL", "LRCX", "KLAC", "QCOM", "ASML",
         "TXN", "ADI", "MCHP", "NXPI", "ON", "MPWR", "CRUS", "DIOD", "LSCC", "RMBS", "SLAB", "WOLF",
         "TER", "COHR", "ENTG", "FORM", "ONTO", "MKSI"
     ]
     
-    # Ponderaciones aproximadas normalizadas para el cálculo matemático del valor "Real"
-    # Dando mayor peso a los pesos pesados del sector
+    # Ponderaciones aproximadas normalizadas
     pesos = {
         "NVDA": 0.12, "MU": 0.12, "AMD": 0.12, "AVGO": 0.11, 
         "INTC": 0.06, "AMAT": 0.06, "TSM": 0.06, "MRVL": 0.05, 
         "LRCX": 0.05, "KLAC": 0.05, "QCOM": 0.04, "ASML": 0.02
     }
-    # Completar el resto de las 18 empresas con un peso equitativo del 0.0077 (para sumar 1.0 en total)
     for t in tickers_indice:
         if t not in pesos:
             pesos[t] = 0.0077
@@ -50,14 +47,11 @@ def run_prediction():
                     retorno_1h = df_t['Close'].pct_change(12)
                     retornos_componentes.append(retorno_1h)
                     
-                    # Para el cálculo "Real" del día de hoy, tomamos la última variación de la primera hora
                     if not df_t.empty:
                         ultima_variacion_accion = float(df_t['Close'].pct_change(12).iloc[-1])
                         retornos_actuales_ponderados.append(ultima_variacion_accion * pesos[ticker])
             
-            # Combinamos los retornos históricos para entrenar XGBoost
             df_retornos_historicos = pd.concat(retornos_componentes, axis=1).mean(axis=1)
-            
             df_soxl['index_trend_1h'] = df_retornos_historicos
             df_soxl['vol_ratio'] = df_soxl['Volume'].rolling(12).sum() / df_soxl['Volume'].rolling(78).mean()
             
@@ -80,11 +74,16 @@ def run_prediction():
                 for target in ['Low','High','Close']:
                     preds[target] = round(float(models[target].predict(dlast)), 2)
                 
-                # --- CÁLCULO DEL PRECIO REAL EN BASE A COMPONENTES ---
+                # --- CÁLCULO DE MÉTRICAS REALES Y PROYECTADAS ---
                 precio_apertura_soxl = float(df_soxl['Open'].resample('1D').first().iloc[-1])
+                precio_actual_soxl = float(df_soxl['Close'].iloc[-1])
                 variacion_mercado_30 = sum(retornos_actuales_ponderados)
-                # Aplicamos el apalancamiento 3X al movimiento calculado de las 30 empresas
-                preds["Real"] = round(precio_apertura_soxl * (1 + (variacion_mercado_30 * 3)), 2)
+                
+                # 1. Real: Precio real actual de mercado en el momento de la corrida
+                preds["Real"] = round(precio_actual_soxl, 2)
+                
+                # 2. Close Real: Proyección matemática de cierre basada en la inercia 3X de los componentes
+                preds["Close Real"] = round(precio_apertura_soxl * (1 + (variacion_mercado_30 * 3)), 2)
                 es_real = True
 
     except Exception as e:
@@ -92,7 +91,7 @@ def run_prediction():
         
     print(f"🔮 Entregable Final: {preds}")
     
-    # Guardar en el archivo CSV histórico
+    # Guardar en el archivo CSV histórico de GitHub
     pred_df = pd.DataFrame([preds], index=[today])
     file_exists = os.path.exists(csv_filename)
     pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
@@ -106,8 +105,9 @@ def run_prediction():
             f"🔹 Estado: {tipo_data}\n\n"
             f"📈 High estimado: {preds['High']}\n"
             f"📉 Low estimado: {preds['Low']}\n"
-            f"🏁 Close estimado: {preds['Close']}\n"
-            f"📊 Real (30 Empresas): {preds['Real']}\n\n"
+            f"🏁 Close estimado (IA): {preds['Close']}\n"
+            f"📊 Real actual (SOXL): {preds['Real']}\n"
+            f"🎯 Close Real (Proyección 30 emp.): {preds['Close Real']}\n\n"
             f"💾 Historial de 30 activos actualizado en GitHub."
         )
 
