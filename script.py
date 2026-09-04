@@ -11,8 +11,8 @@ def run_prediction():
     csv_filename = "soxl_predictions.csv"
     today = datetime.date.today().strftime("%Y-%m-%d")
     
-    # Valores de contingencia base
-    preds = {"Low": 105.44, "High": 116.29, "Close": 113.22, "Real": 112.50, "Close Real": 112.90, "Tendencia": "Alza"}
+    # Valores de contingencia de seguridad modificados para notar si cambian
+    preds = {"Low": 0.0, "High": 0.0, "Close": 0.0, "Real": 0.0, "Close Real": 0.0, "Tendencia": "Estable"}
     es_real = False
     
     tickers_indice = [
@@ -29,7 +29,7 @@ def run_prediction():
         if t not in pesos: pesos[t] = 0.0077
 
     try:
-        print("📥 Descargando datos del mercado de los 30 componentes, Nasdaq y VIX...")
+        print("📥 Descargando datos desde Yahoo Finance...")
         incluir_premarket = True if modo == "APERTURA" else False
         
         datos = yf.download(tickers_indice, period="60d", interval="5m", group_by='ticker', prepost=incluir_premarket)
@@ -42,7 +42,17 @@ def run_prediction():
             df_nasdaq = nasdaq_data["^IXIC"] if isinstance(nasdaq_data.columns, pd.MultiIndex) else nasdaq_data
             df_vix = vix_data["^VIX"] if isinstance(vix_data.columns, pd.MultiIndex) else vix_data
             
-            print("🧮 Procesando métricas individuales para las 30 empresas...")
+            # --- FILTRAR ESTRICTAMENTE LOS DATOS DEL DÍA DE HOY ---
+            # Esto evita arrastrar datos antiguos en los promedios instantáneos
+            hoy_soxl = df_soxl.loc[df_soxl.index.strftime('%Y-%m-%d') == today]
+            
+            if hoy_soxl.empty:
+                # Si el mercado no ha abierto hoy, usamos el último día disponible en el historial
+                today = df_soxl.index[-1].strftime('%Y-%m-%d')
+                hoy_soxl = df_soxl.loc[df_soxl.index.strftime('%Y-%m-%d') == today]
+            
+            print(f"📊 Procesando sesión correspondiente a la fecha: {today}")
+            
             retornos_componentes = []
             variacion_ponderada_actual = 0.0
             proyeccion_ponderada_cierre = 0.0
@@ -50,26 +60,26 @@ def run_prediction():
             for ticker in tickers_indice:
                 if ticker in datos.columns.levels if isinstance(datos.columns, pd.MultiIndex) else ticker in datos.columns:
                     df_t = datos[ticker] if isinstance(datos.columns, pd.MultiIndex) else datos
-                    retorno_1h = df_t['Close'].pct_change(12)
-                    retornos_componentes.append(retorno_1h)
+                    retornos_componentes.append(df_t['Close'].pct_change(12))
                     
-                    if not df_t.empty and len(df_t) >= 2:
-                        precio_apertura_t = float(df_t['Open'].iloc[0])
-                        precio_actual_t = float(df_t['Close'].iloc[-1])
+                    # Filtrar datos de la empresa para el día en análisis
+                    hoy_t = df_t.loc[df_t.index.strftime('%Y-%m-%d') == today]
+                    
+                    if len(hoy_t) >= 1:
+                        precio_apertura_t = float(hoy_t['Open'].iloc[0])
+                        precio_actual_t = float(hoy_t['Close'].iloc[-1])
                         
-                        # Variación acumulada real actual de esta empresa desde la apertura
+                        # Rendimiento real neto de la empresa hoy
                         var_actual_t = (precio_actual_t - precio_apertura_t) / precio_apertura_t
                         variacion_ponderada_actual += (var_actual_t * pesos[ticker])
                         
-                        # Estimación de cierre para esta empresa basada en su velocidad/inercia actual
-                        # Usamos la tasa de cambio de los últimos períodos como proyector
-                        cambio_reciente = (precio_actual_t - float(df_t['Close'].iloc[-2])) / float(df_t['Close'].iloc[-2]) if len(df_t) > 1 else 0
-                        proyeccion_cierre_t = precio_actual_t * (1 + cambio_reciente * 2) # Proyección suavizada
+                        # Estimación de cierre individual usando la última inercia de 5 minutos
+                        cambio_reciente = (precio_actual_t - float(hoy_t['Close'].iloc[-2])) / float(hoy_t['Close'].iloc[-2]) if len(hoy_t) > 1 else 0
+                        proyeccion_cierre_t = precio_actual_t * (1 + cambio_reciente * 6) # Multiplicador de inercia ajustado para proyección
                         var_proyectada_t = (proyeccion_cierre_t - precio_apertura_t) / precio_apertura_t
                         proyeccion_ponderada_cierre += (var_proyectada_t * pesos[ticker])
             
             df_retornos_historicos = pd.concat(retornos_componentes, axis=1).mean(axis=1)
-            
             df_soxl['index_trend_1h'] = df_retornos_historicos
             df_soxl['vol_ratio'] = df_soxl['Volume'].rolling(12).sum() / df_soxl['Volume'].rolling(78).mean()
             df_soxl['nasdaq_trend'] = df_nasdaq['Close'].pct_change(12)
@@ -95,47 +105,44 @@ def run_prediction():
                 for target in ['Low','High','Close']:
                     preds[target] = round(float(models[target].predict(dlast)), 2)
                 
-                # --- NUEVOS CÁLCULOS TÉCNICOS SOLICITADOS ---
-                precio_apertura_soxl = float(df_soxl['Open'].iloc[0])
+                # --- EXTRACCIÓN CORRECTA CON DATOS TEMPORALES DE HOY ---
+                precio_apertura_soxl = float(hoy_soxl['Open'].iloc[0])
                 
-                # 1. Real: Calculado matemáticamente a partir del rendimiento neto de las 30 empresas (3X)
+                # 1. Real: Rendimiento matemático de las 30 empresas escalado a SOXL (3X) sobre la apertura de hoy
                 preds["Real"] = round(precio_apertura_soxl * (1 + (variacion_ponderada_actual * 3)), 2)
                 
-                # 2. Close Real: Basado en la estimación del precio de cierre de las 30 empresas
+                # 2. Close Real: Proyección basada en los cierres de los componentes
                 preds["Close Real"] = round(precio_apertura_soxl * (1 + (proyeccion_ponderada_cierre * 3)), 2)
                 
-                # 3. Tendencia: Comparando el Cierre estimado de la IA contra la apertura
+                # 3. Tendencia
                 preds["Tendencia"] = "Alza" if preds["Close"] >= precio_apertura_soxl else "Baja"
                 es_real = True
 
     except Exception as e:
-        print(f"⚠️ Nota de contingencia: {e}")
+        print(f"❌ Error real detectado en el cálculo intradía: {e}")
         
-    print(f"🔮 Resultados con Métricas Solicitadas: {preds}")
-    
-    # Guardar en el CSV histórico
-    id_registro = f"{today}_{modo}"
-    pred_df = pd.DataFrame([preds], index=[id_registro])
+    # Forzar el guardado con los datos reales en el archivo CSV histórico
+    print(f"🔮 Datos finales reales calculados: {preds}")
+    pred_df = pd.DataFrame([preds], index=[f"{today}_{modo}"])
     file_exists = os.path.exists(csv_filename)
     pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
     
-    # Formatear el reporte de Telegram con los nuevos campos e indicadores visuales
     encabezado = "☀️ *REPORTE PRE-MERCADO SOXL*" if modo == "APERTURA" else "📉 *REPORTE PRE-CIERRE SOXL*"
     icon_tendencia = "🟢" if preds["Tendencia"] == "Alza" else "🔴"
-    tipo_data = "Cálculo Puro Subyacente (30 Empresas)" if es_real else "Valores Base de Contingencia"
+    tipo_data = "Cálculo Puro Subyacente del Día" if es_real else "⚠️ Valores Base de Fallo de Datos"
     
     with open("telegram_msg.txt", "w", encoding="utf-8") as f:
         f.write(
             f"{encabezado}\n"
-            f"📅 Fecha: {today}\n"
+            f"📅 Fecha de Análisis: {today}\n"
             f"🔹 Estado: {tipo_data}\n"
-            f"{icon_tendencia} *Tendencia del día:* {preds['Tendencia']}\n\n"
+            f"{icon_tendencia} *Tendencia:* {preds['Tendencia']}\n\n"
             f"📈 High estimado: {preds['High']}\n"
             f"📉 Low estimado: {preds['Low']}\n"
             f"🏁 Close estimado (IA): {preds['Close']}\n"
             f"📊 Real (30 Empresas): {preds['Real']}\n"
             f"🎯 Close Real (Proyección 30): {preds['Close Real']}\n\n"
-            f"💾 Historial y estructura actualizados en GitHub."
+            f"💾 Historial corregido y actualizado en GitHub."
         )
 
 if __name__ == "__main__":
