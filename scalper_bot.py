@@ -10,10 +10,8 @@ def calcular_vwap_diario(df):
     df_copy = df.copy()
     df_copy['Fecha'] = df_copy.index.date
     vp = df_copy['Close'] * df_copy['Volume']
-    
     df_copy['Cum_VP'] = vp.groupby(df_copy['Fecha']).cumsum()
     df_copy['Cum_Vol'] = df_copy['Volume'].groupby(df_copy['Fecha']).cumsum()
-    
     return df_copy['Cum_VP'] / df_copy['Cum_Vol'].replace(0, 1)
 
 def calcular_atr(df, period=14):
@@ -48,16 +46,18 @@ def descargar_activo_seguro(ticker, period="10d", prepost=False):
         return pd.DataFrame()
 
 def run_scalper():
-    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Iniciando Pro-Scalper SOXL con Registro Histórico de Predictibilidad...")
+    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Iniciando Pro-Scalper SOXL con Variables de Entorno Macro...")
     
     csv_filename = "scalper_predictions.csv"
     today_str = datetime.date.today().strftime("%Y-%m-%d")
     hora_key = datetime.datetime.now().strftime("%H:%M")
     id_registro = f"{today_str}_{hora_key}"
     
+    # Añadidas las columnas de variables macro al diccionario histórico
     preds = {
         "Actual": 0.0, "Proyectado_10m": 0.0, "Tendencia": "Estable", 
-        "Sesgo_VWAP": "Neutro", "Impulso": "Neutro", "Senal_Alerta": "Normal"
+        "Sesgo_VWAP": "Neutro", "Impulso": "Neutro", "Senal_Alerta": "Normal",
+        "Nivel_Nasdaq": 0.0, "Nivel_VIX": 0.0 # Nuevos campos de auditoría
     }
     es_real = False
     
@@ -66,8 +66,10 @@ def run_scalper():
     df_nvda = descargar_activo_seguro("NVDA", period="10d")
     df_aapl = descargar_activo_seguro("AAPL", period="10d")
     df_msft = descargar_activo_seguro("MSFT", period="10d")
+    df_nasdaq_raw = descargar_activo_seguro("^IXIC", period="2d")
+    df_vix_raw = descargar_activo_seguro("^VIX", period="2d")
     
-    if not df_soxl.empty and not df_qqq.empty and not df_nvda.empty and not df_aapl.empty and not df_msft.empty:
+    if not df_soxl.empty and not df_qqq.empty and not df_nvda.empty and not df_nasdaq_raw.empty and not df_vix_raw.empty:
         try:
             df_qqq = df_qqq.reindex(df_soxl.index, method='ffill')
             df_nvda = df_nvda.reindex(df_soxl.index, method='ffill')
@@ -106,16 +108,16 @@ def run_scalper():
                 ultimo_bloque = df_soxl[columnas_features].tail(1)
                 dlast = xgb.DMatrix(ultimo_bloque)
                 
-                preds["Actual"] = round(float(ultimo_bloque['Close'].iloc), 2)
-                preds["Proyectado_10m"] = round(float(model.predict(dlast)), 2)
+                preds["Actual"] = round(float(ultimo_bloque['Close'].iloc[0]), 2)
+                preds["Proyectado_10m"] = round(float(model.predict(dlast)[0]), 2)
                 preds["Tendencia"] = "Alza" if preds["Proyectado_10m"] > preds["Actual"] else "Baja"
                 
                 ultimo_precio = preds["Actual"]
-                ultimo_vwap = round(float(ultimo_bloque['VWAP'].iloc), 2)
-                ultima_ema9 = float(ultimo_bloque['EMA_9'].iloc)
-                ultima_ema21 = float(ultimo_bloque['EMA_21'].iloc)
-                ultimo_macd_hist = float(ultimo_bloque['MACD_Hist'].iloc)
-                ultimo_atr = float(ultimo_bloque['ATR'].iloc)
+                ultimo_vwap = round(float(ultimo_bloque['VWAP'].iloc[0]), 2)
+                ultima_ema9 = float(ultimo_bloque['EMA_9'].iloc[0])
+                ultima_ema21 = float(ultimo_bloque['EMA_21'].iloc[0])
+                ultimo_macd_hist = float(ultimo_bloque['MACD_Hist'].iloc[0])
+                ultimo_atr = float(ultimo_bloque['ATR'].iloc[0])
                 
                 preds["Sesgo_VWAP"] = "COMPRADORES" if ultimo_precio > ultimo_vwap else "VENDEDORES"
                 
@@ -141,18 +143,20 @@ def run_scalper():
                     preds["Senal_Alerta"] = "RUPTURA_BAJISTA"
                 else:
                     preds["Senal_Alerta"] = "NORMAL"
-                    
+                
+                # Capturar e integrar los niveles macro de cierre de último minuto
+                preds["Nivel_Nasdaq"] = round(float(df_nasdaq_raw['Close'].iloc[-1]), 2)
+                preds["Nivel_VIX"] = round(float(df_vix_raw['Close'].iloc[-1]), 2)
                 es_real = True
         except Exception as e:
-            print(f"❌ Error en el bucle de procesamiento técnico: {e}")
+            print(f"❌ Error en procesamiento: {e}")
             
-    # --- MEJORA: ESCRITURA EN LA CAJA NEGRA CSV ---
-    print(f"💾 Registrando auditoría de scalping: {preds}")
+    # Escritura en la base de datos CSV histórica
     pred_df = pd.DataFrame([preds], index=[id_registro])
     file_exists = os.path.exists(csv_filename)
     pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
     
-    # Formateo estructurado para la interfaz de Telegram
+    # Formateo para Telegram
     hora_actual = datetime.datetime.now().strftime("%I:%M %p")
     tipo_data = "Indicadores Estratégicos Consolidados" if es_real else "⚠️ Valores de Contingencia"
     icon_tendencia = "🟢" if preds["Tendencia"] == "Alza" else "🔴"
@@ -167,6 +171,9 @@ def run_scalper():
             f"📊 *Estrategia Intradía (VWAP Diario):*\n"
             f"▪️ Control del Día: {preds['Sesgo_VWAP']}\n"
             f"▪️ Impulso Reciente: {preds['Impulso']}\n\n"
+            f"📈 *Entorno Macro Sincronizado:*\n"
+            f"▪️ Nasdaq: {preds['Nivel_Nasdaq']} pts\n"
+            f"▪️ Índice VIX: {preds['Nivel_VIX']}\n\n"
             f"🚨 *Filtro de Rupturas (ATR 14):*\n"
             f"▪️ {preds['Senal_Alerta']}\n"
         )
