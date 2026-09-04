@@ -11,7 +11,7 @@ def run_prediction():
     csv_filename = "soxl_predictions.csv"
     today = datetime.date.today().strftime("%Y-%m-%d")
     
-    # Valores de contingencia de seguridad modificados para notar si cambian
+    # Valores de contingencia base limpios en ceros para auditar
     preds = {"Low": 0.0, "High": 0.0, "Close": 0.0, "Real": 0.0, "Close Real": 0.0, "Tendencia": "Estable"}
     es_real = False
     
@@ -42,12 +42,11 @@ def run_prediction():
             df_nasdaq = nasdaq_data["^IXIC"] if isinstance(nasdaq_data.columns, pd.MultiIndex) else nasdaq_data
             df_vix = vix_data["^VIX"] if isinstance(vix_data.columns, pd.MultiIndex) else vix_data
             
-            # --- FILTRAR ESTRICTAMENTE LOS DATOS DEL DÍA DE HOY ---
-            # Esto evita arrastrar datos antiguos en los promedios instantáneos
+            # Filtrar estrictamente la fecha de hoy
             hoy_soxl = df_soxl.loc[df_soxl.index.strftime('%Y-%m-%d') == today]
             
             if hoy_soxl.empty:
-                # Si el mercado no ha abierto hoy, usamos el último día disponible en el historial
+                # Si es fin de semana o el mercado no abrió hoy, tomamos el último día del historial para simular
                 today = df_soxl.index[-1].strftime('%Y-%m-%d')
                 hoy_soxl = df_soxl.loc[df_soxl.index.strftime('%Y-%m-%d') == today]
             
@@ -62,20 +61,17 @@ def run_prediction():
                     df_t = datos[ticker] if isinstance(datos.columns, pd.MultiIndex) else datos
                     retornos_componentes.append(df_t['Close'].pct_change(12))
                     
-                    # Filtrar datos de la empresa para el día en análisis
                     hoy_t = df_t.loc[df_t.index.strftime('%Y-%m-%d') == today]
                     
-                    if len(hoy_t) >= 1:
-                        precio_apertura_t = float(hoy_t['Open'].iloc[0])
-                        precio_actual_t = float(hoy_t['Close'].iloc[-1])
+                    if len(hoy_t) >= 2:
+                        precio_apertura_t = float(hoy_t['Open'].iloc[0]) # Corrección: .iloc[0]
+                        precio_actual_t = float(hoy_t['Close'].iloc[-1]) # Corrección: .iloc[-1]
                         
-                        # Rendimiento real neto de la empresa hoy
                         var_actual_t = (precio_actual_t - precio_apertura_t) / precio_apertura_t
                         variacion_ponderada_actual += (var_actual_t * pesos[ticker])
                         
-                        # Estimación de cierre individual usando la última inercia de 5 minutos
-                        cambio_reciente = (precio_actual_t - float(hoy_t['Close'].iloc[-2])) / float(hoy_t['Close'].iloc[-2]) if len(hoy_t) > 1 else 0
-                        proyeccion_cierre_t = precio_actual_t * (1 + cambio_reciente * 6) # Multiplicador de inercia ajustado para proyección
+                        cambio_reciente = (precio_actual_t - float(hoy_t['Close'].iloc[-2])) / float(hoy_t['Close'].iloc[-2])
+                        proyeccion_cierre_t = precio_actual_t * (1 + cambio_reciente * 6)
                         var_proyectada_t = (proyeccion_cierre_t - precio_apertura_t) / precio_apertura_t
                         proyeccion_ponderada_cierre += (var_proyectada_t * pesos[ticker])
             
@@ -98,32 +94,29 @@ def run_prediction():
                 models = {}
                 for target in ['Low','High','Close']:
                     dtrain = xgb.DMatrix(X_train, label=y_train[target])
-                    model = xgb.train({'objective':'reg:squarederror', 'max_depth':5, 'eta':0.1}, dtrain, num_boost_round=40)
+                    model = xgb.train({'objective':'reg:squarederror', 'max_depth':5}, dtrain, num_boost_round=30)
                     models[target] = model
                 
                 dlast = xgb.DMatrix(X_train.tail(1))
                 for target in ['Low','High','Close']:
                     preds[target] = round(float(models[target].predict(dlast)), 2)
                 
-                # --- EXTRACCIÓN CORRECTA CON DATOS TEMPORALES DE HOY ---
-                precio_apertura_soxl = float(hoy_soxl['Open'].iloc[0])
+                # Extracción con indexación segura para evitar errores de tipo serie
+                precio_apertura_soxl = float(hoy_soxl['Open'].iloc[0]) # Corrección: .iloc[0]
                 
-                # 1. Real: Rendimiento matemático de las 30 empresas escalado a SOXL (3X) sobre la apertura de hoy
                 preds["Real"] = round(precio_apertura_soxl * (1 + (variacion_ponderada_actual * 3)), 2)
-                
-                # 2. Close Real: Proyección basada en los cierres de los componentes
                 preds["Close Real"] = round(precio_apertura_soxl * (1 + (proyeccion_ponderada_cierre * 3)), 2)
-                
-                # 3. Tendencia
                 preds["Tendencia"] = "Alza" if preds["Close"] >= precio_apertura_soxl else "Baja"
                 es_real = True
 
     except Exception as e:
-        print(f"❌ Error real detectado en el cálculo intradía: {e}")
+        print(f"❌ Error en el cálculo interno de Pandas: {e}")
         
-    # Forzar el guardado con los datos reales en el archivo CSV histórico
-    print(f"🔮 Datos finales reales calculados: {preds}")
-    pred_df = pd.DataFrame([preds], index=[f"{today}_{modo}"])
+    print(f"🔮 Valores Finales Procesados: {preds}")
+    
+    # Escribir fila de datos calculados
+    id_registro = f"{today}_{modo}"
+    pred_df = pd.DataFrame([preds], index=[id_registro])
     file_exists = os.path.exists(csv_filename)
     pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
     
@@ -142,7 +135,7 @@ def run_prediction():
             f"🏁 Close estimado (IA): {preds['Close']}\n"
             f"📊 Real (30 Empresas): {preds['Real']}\n"
             f"🎯 Close Real (Proyección 30): {preds['Close Real']}\n\n"
-            f"💾 Historial corregido y actualizado en GitHub."
+            f"💾 Estructura de datos sincronizada en GitHub."
         )
 
 if __name__ == "__main__":
