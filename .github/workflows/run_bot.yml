@@ -37,19 +37,10 @@ jobs:
         git commit -m "Auto-update: Predicciones SOXL" || true
         git push || true
 
-    - name: Leer mensaje generado por Python
-      id: msg
-      run: |
-        # Leemos el archivo txt y lo preparamos para que GitHub Actions lo procese de forma segura
-        EOF=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
-        echo "text<<$EOF" >> $GITHUB_OUTPUT
-        cat telegram_msg.txt >> $GITHUB_OUTPUT
-        echo "$EOF" >> $GITHUB_OUTPUT
-
     - name: Enviar Reporte Directo a Telegram Nativamente
       uses: appleboy/telegram-action@master
       with:
         to: ${{ secrets.TELEGRAM_CHAT_ID }}
         token: ${{ secrets.TELEGRAM_TOKEN }}
-        message: ${{ steps.msg.outputs.text }}
-        format: markdown
+        # Cargamos el archivo de texto directamente usando la directiva file de la acción
+        file: telegram_msg.txt
