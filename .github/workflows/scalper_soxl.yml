@@ -2,23 +2,15 @@ name: "Ejecutar Scalper SOXL 30 Minutos"
 
 on:
   schedule:
-    # --- BRACKET 1: MORNING SESSIONS ---
-    # 9:45 AM, 10:00 AM, 10:30 AM, 11:30 AM EST (Regular Market Hours)
-    # Converted to UTC time: 13:45, 14:00, 14:30, 15:30 UTC
     - cron: '45 13 * * 1-5'
     - cron: '0 14 * * 1-5'
     - cron: '30 14 * * 1-5'
     - cron: '30 15 * * 1-5'
-    
-    # --- BRACKET 2: AFTERNOON SESSIONS ---
-    # 2:00 PM, 2:30 PM, 3:00 PM, 3:30 PM EST (Pre-Close Squeeze)
-    # Converted to UTC time: 18:00, 18:30, 19:00, 19:30 UTC
     - cron: '0 18 * * 1-5'
     - cron: '30 18 * * 1-5'
     - cron: '0 19 * * 1-5'
     - cron: '30 19 * * 1-5'
-    
-  workflow_dispatch: # Allows you to trigger manual checks at any minute
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -36,13 +28,19 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Instalar Librerias de Grado Institucional
-      run: |
-        python -m pip install --upgrade pip
-        pip install yfinance pandas numpy xgboost requests
+    - name: Instalar Librerias
+      run: pip install yfinance pandas numpy xgboost requests
 
     - name: Ejecutar Motor Pro-Scalper
       run: python scalper_bot.py
+
+    - name: Guardar Historial del Scalper en el Repositorio
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@://github.com'
+        git add scalper_predictions.csv || true
+        git commit -m "Auto-update: Caja Negra Scalper Intradía" || true
+        git push || true
 
     - name: Enviar Alerta Inmediata a Telegram
       uses: appleboy/telegram-action@master
