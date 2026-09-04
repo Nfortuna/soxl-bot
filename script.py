@@ -1,42 +1,16 @@
 import os
 import datetime
-import requests
 import yfinance as yf
 import pandas as pd
 import xgboost as xgb
-
-def enviar_telegram(mensaje):
-    # Obtenemos las credenciales guardadas en GitHub Secrets
-    token = os.getenv("TELEGRAM_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    
-    if token and chat_id:
-        # Construimos la URL usando variables limpias para burlar el filtrado de asteriscos de GitHub
-        url = f"https://telegram.org{token}/sendMessage"
-        payload = {
-            "chat_id": str(chat_id).strip(),
-            "text": mensaje,
-            "parse_mode": "Markdown"
-        }
-        try:
-            # Forzamos una petición limpia sin que la consola imprima la URL real si falla
-            r = requests.post(url, json=payload, timeout=15)
-            if r.status_code == 200:
-                print("✉️ Mensaje enviado con éxito a Telegram.")
-            else:
-                print(f"⚠️ Telegram rechazó la petición. Código de estado: {r.status_code}")
-        except Exception:
-            print("❌ Error crítico: GitHub bloqueó la conexión saliente a Telegram.")
-    else:
-        print("⚠️ Faltan las credenciales de Telegram en las variables de entorno.")
 
 def run_prediction():
     print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Iniciando proceso de predicción SOXL...")
     csv_filename = "soxl_predictions.csv"
     today = datetime.date.today().strftime("%Y-%m-%d")
     
-    # Valores base por defecto
-    preds = {"Low": 25.00, "High": 28.00, "Close": 26.50}
+    # Valores base de contingencia (Mercado cerrado o fin de semana)
+    preds = {"Low": 105.44, "High": 116.29, "Close": 113.22}
     es_real = False
     
     try:
@@ -69,25 +43,29 @@ def run_prediction():
                     es_real = True
 
     except Exception as e:
-        print(f"⚠️ Nota de contingencia: {e}")
+        print(f"⚠️ Nota de contingencia bursátil: {e}")
         
-    print(f"🔮 Predicción calculada: {preds}")
+    print(f"🔮 Predicción final: {preds}")
+    
+    # Guardar en el historial CSV
     pred_df = pd.DataFrame([preds], index=[today])
     file_exists = os.path.exists(csv_filename)
     pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
+    print(f"💾 Archivo escrito con éxito: {csv_filename}")
     
-    # Formateo del mensaje
+    # --- CREAR REPORTE PARA GITHUB ACTIONS ---
     tipo_data = "📊 Datos de Mercado Reales" if es_real else "⚠️ Valores Base de Contingencia"
-    mensaje_telegram = (
-        f"🤖 *Predicción SOXL Activa*\n"
-        f"📅 Fecha: {today}\n"
-        f"🔹 Estado: {tipo_data}\n\n"
-        f"📈 *High estimado:* ${preds['High']}\n"
-        f"📉 *Low estimado:* ${preds['Low']}\n"
-        f"🏁 *Close estimado:* ${preds['Close']}\n\n"
-        f"💾 Historial actualizado en GitHub."
-    )
-    enviar_telegram(mensaje_telegram)
+    with open("telegram_msg.txt", "w", encoding="utf-8") as f:
+        f.write(
+            f"🤖 *Predicción SOXL Activa*\n"
+            f"📅 Fecha: {today}\n"
+            f"🔹 Estado: {tipo_data}\n\n"
+            f"📈 *High estimado:* ${preds['High']}\n"
+            f"📉 *Low estimado:* ${preds['Low']}\n"
+            f"🏁 *Close estimado:* ${preds['Close']}\n\n"
+            f"💾 Historial actualizado en GitHub."
+        )
+    print("📝 Archivo de texto 'telegram_msg.txt' generado para el bot nativo.")
 
 if __name__ == "__main__":
     run_prediction()
