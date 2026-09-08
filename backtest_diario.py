@@ -18,14 +18,19 @@ def auditar_modelo_diario():
         df = pd.read_csv(csv_filename, index_col=0)
         df.columns = [str(col).capitalize() for col in df.columns]
         
-        col_high = [c for col in df.columns if 'high' in str(col).lower()]
-        col_close = [c for col in df.columns if 'close' in str(col).lower()]
-        col_real = [c for col in df.columns if 'real' in str(col).lower()]
+        col_high = [c for c in df.columns if 'high' in str(c).lower()]
+        col_close = [c for c in df.columns if 'close' in str(c).lower()]
+        col_real = [c for c in df.columns if 'real' in str(c).lower()]
         
         if not col_high or not col_close or not col_real:
             return
             
-        c_high, c_close, c_real = col_high[0], col_close[0], col_real[0]
+        # CORRECCIÓN DE EXTRACCIÓN EXTRAÍDA: Tomar el nombre de texto de la columna directa de la lista
+        c_high = col_high[0]
+        c_close = col_close[0]
+        c_real = col_real[0]
+        
+        # Filtrar solo filas con datos válidos mayores a cero usando las variables de texto plano
         df = df[(df[c_high] > 0) & (df[c_real] > 0)]
         
         if len(df) < 2:
@@ -50,9 +55,9 @@ def auditar_modelo_diario():
                 f"🔹 Días Operativos Evaluados: {df['Fecha_Dia'].nunique()}\n"
                 f"🎯 *Win Rate Direccional:* {win_rate_macro:.2f}%\n"
             )
-        print("✅ Reporte macro guardado.")
+        print("✅ Reporte macro guardado exitosamente.")
     except Exception as e:
-        print(f"Nota en la auditoría diaria: {e}")
+        print(f"❌ Error en la auditoría diaria: {e}")
 
 if __name__ == "__main__":
     auditar_modelo_diario()
