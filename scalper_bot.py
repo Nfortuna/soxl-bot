@@ -203,5 +203,5 @@ def run_scalper():
             f"🚨 Filtro de Rupturas Avanzado (ATR 14):\n"
             f"▪️ {preds['Senal_Alerta']}\n"
             )
-            if name == "main":
-            run_scalper()
+if __name__ == "__main__":
+    run_scalper()
