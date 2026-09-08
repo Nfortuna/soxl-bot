@@ -38,7 +38,7 @@ def descargar_activo_seguro(ticker, period="7d", prepost=False):
         columnas_necesarias = ['Open', 'High', 'Low', 'Close', 'Volume']
         
         if not all(col in df.columns for col in columnas_necesarias):
-            print(f"❌ Error: {ticker} no contiene la estructura estándar de precios.")
+            print(f"❌ Error: {ticker} no contiene la estructura estándar.")
             return pd.DataFrame()
             
         if df.index.tz is not None:
@@ -71,12 +71,11 @@ def run_scalper():
     df_nvda = descargar_activo_seguro("NVDA", period="7d")
     df_aapl = descargar_activo_seguro("AAPL", period="7d")
     df_msft = descargar_activo_seguro("MSFT", period="7d")
-    df_nasdaq_raw = descargar_activo_seguro("^IXIC", period="7d") # Ampliado a 7d para entrenamiento conjunto
-    df_vix_raw = descargar_activo_seguro("^VIX", period="7d")     # Ampliado a 7d para entrenamiento conjunto
+    df_nasdaq_raw = descargar_activo_seguro("^IXIC", period="7d") 
+    df_vix_raw = descargar_activo_seguro("^VIX", period="7d")     
     
     if not df_soxl.empty and not df_qqq.empty and not df_nvda.empty and not df_nasdaq_raw.empty and not df_vix_raw.empty:
         try:
-            # Sincronización cruzada de la micro-infraestructura completa
             df_qqq = df_qqq.reindex(df_soxl.index, method='ffill')
             df_nvda = df_nvda.reindex(df_soxl.index, method='ffill')
             df_aapl = df_aapl.reindex(df_soxl.index, method='ffill')
@@ -84,7 +83,7 @@ def run_scalper():
             df_nasdaq = df_nasdaq_raw.reindex(df_soxl.index, method='ffill')
             df_vix = df_vix_raw.reindex(df_soxl.index, method='ffill')
             
-            # --- CÁLCULO DE INDICADORES BASE ---
+            # --- CÁLCULO DE INDICADORES ---
             df_soxl['VWAP'] = calcular_vwap_diario(df_soxl)
             df_soxl['ATR'] = calcular_atr(df_soxl, period=14)
             df_soxl['EMA_9'] = df_soxl['Close'].ewm(span=9, adjust=False).mean()
@@ -96,28 +95,21 @@ def run_scalper():
             df_soxl['MACD_Signal'] = df_soxl['MACD_Line'].ewm(span=9, adjust=False).mean()
             df_soxl['MACD_Hist'] = df_soxl['MACD_Line'] - df_soxl['MACD_Signal']
             
-            # Tendencias de 1 minuto de activos cruzados
             df_soxl['qqq_trend_1m'] = df_qqq['Close'].pct_change(1)
             df_soxl['nvda_trend_1m'] = df_nvda['Close'].pct_change(1)
             df_soxl['aapl_trend_1m'] = df_aapl['Close'].pct_change(1)
             df_soxl['msft_trend_1m'] = df_msft['Close'].pct_change(1)
             
-            # --- IMPLEMENTACIÓN DE MEJORAS CUANTITATIVAS ---
-            # 1. Features Relativas Normalizadas por Volatilidad ATR
+            # --- MEJORA: REGULARIZACIÓN Y FEATURES RELATIVAS ---
             df_soxl['dist_vwap'] = (df_soxl['Close'] - df_soxl['VWAP']) / df_soxl['ATR'].replace(0, 0.01)
             df_soxl['dist_ema9_ema21'] = (df_soxl['EMA_9'] - df_soxl['EMA_21']) / df_soxl['ATR'].replace(0, 0.01)
-            
-            # 2. Features Macro Reales dentro del entrenamiento
             df_soxl['nasdaq_trend_1h'] = df_nasdaq['Close'].pct_change(12)
             df_soxl['vix_level'] = df_vix['Close']
-            
-            # 3. Feature Horaria Intradía (Minutos desde la apertura de Wall Street)
             df_soxl['minutos_desde_apertura'] = (df_soxl.index - df_soxl.index.normalize()).total_seconds() / 60.0 - 570.0
             
-            # 4. Target de Variación Neta (Cambio absoluto en $ en lugar de precio final copia)
+            # Predicción de cambio neto en lugar de valor absoluto copia
             df_soxl['Target_10m'] = df_soxl['Close'].shift(-10) - df_soxl['Close']
             
-            # Matriz definitiva des-correlacionada y de alta varianza informativa
             columnas_features = [
                 'Volume', 'dist_vwap', 'dist_ema9_ema21', 'MACD_Hist', 'vix_level', 
                 'minutos_desde_apertura', 'qqq_trend_1m', 'nvda_trend_1m', 'aapl_trend_1m', 'msft_trend_1m'
@@ -128,14 +120,9 @@ def run_scalper():
             y = df_limpio['Target_10m']
             
             if len(X) > 50:
-                # 5. Parámetros Avanzados de Regularización L2 y Sub-muestreo para mitigar Overfitting
                 params = {
-                    'objective': 'reg:squarederror', 
-                    'max_depth': 3, 
-                    'eta': 0.1,
-                    'subsample': 0.8, 
-                    'colsample_bytree': 0.8, 
-                    'reg_lambda': 1.0
+                    'objective': 'reg:squarederror', 'max_depth': 3, 'eta': 0.1,
+                    'subsample': 0.8, 'colsample_bytree': 0.8, 'reg_lambda': 1.0
                 }
                 dtrain = xgb.DMatrix(X, label=y)
                 model = xgb.train(params, dtrain, num_boost_round=30)
@@ -170,7 +157,7 @@ def run_scalper():
                 ret_msft = float(df_msft['Close'].pct_change(1).iloc[-1])
                 
                 coincidencia_alcista = ret_qqq > 0 and ret_nvda > 0 and ret_aapl > 0 and ret_msft > 0
-                coincidencia_bajista = ret_qq < 0 and ret_nvda < 0 and ret_aapl < 0 and ret_msft < 0
+                coincidencia_bajista = ret_qqq < 0 and ret_nvda < 0 and ret_aapl < 0 and ret_msft < 0
                 rango_vela_actual = np.abs(float(df_soxl['Close'].iloc[-1]) - float(df_soxl['Open'].iloc[-1]))
                 
                 if coincidencia_alcista and rango_vela_actual > (ultimo_atr * 1.2):
@@ -186,6 +173,35 @@ def run_scalper():
         except Exception as e:
             print(f"❌ Error en procesamiento técnico interno: {e}")
             
-    # --- BLINDAJE DE ESCRITURA EN HISTÓRICO CSV (MANEJO DE EXCEPCIONES AISLADO) ---
+    # --- BLINDAJE DE ESCRITURA ---
     try:
         pred_df = pd.DataFrame([preds], index=[id_registro])
+        file_exists = os.path.exists(csv_filename)
+        pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
+        print("💾 Fila guardada con éxito en el historial.")
+    except Exception as csv_err:
+        print(f"⚠️ Alerta CSV (Abierto en Excel): {csv_err}")
+    
+    hora_actual = datetime.datetime.now().strftime("%I:%M %p")
+    tipo_data = "Modelado Cuantitativo Relativo Abierto" if es_real else "⚠️ Valores de Contingencia"
+    icon_tendencia = "🟢" if preds["Tendencia"] == "Alza" else "🔴"
+    signo_cambio = "+" if preds["Proyectado_Cambio_10m"] > 0 else ""
+    
+    with open("telegram_scalper_msg.txt", "w", encoding="utf-8") as f:
+        f.write(
+            f"⚡ *PRO-SCALPER CUANTITATIVO* ({hora_actual} EST)\n"
+            f"🔹 Estado: {tipo_data}\n"
+            f"{icon_tendencia} Dirección Estimada (10m): {preds['Tendencia']}\n\n"
+            f"💵 Precio Actual SOXL: ${preds['Actual']}\n"
+            f"🎯 Variación de IA Esperada: {signo_cambio}${preds['Proyectado_Cambio_10m']}\n\n"
+            f"📊 Estrategia Des-correlacionada (VWAP):\n"
+            f"▪️ Control del Día: {preds['Sesgo_VWAP']}\n"
+            f"▪️ Impulso Reciente: {preds['Impulso']}\n\n"
+            f"📈 Entorno Macro Sincronizado:\n"
+            f"▪️ Nasdaq: {preds['Nivel_Nasdaq']} pts\n"
+            f"▪️ Índice VIX: {preds['Nivel_VIX']}\n\n"
+            f"🚨 Filtro de Rupturas Avanzado (ATR 14):\n"
+            f"▪️ {preds['Senal_Alerta']}\n"
+            )
+            if name == "main":
+            run_scalper()
