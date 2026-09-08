@@ -38,6 +38,11 @@ def run_prediction():
     print(f"[{now_time.strftime('%Y-%m-%d %H:%M:%S')}] Starting Sincronizacion Cuantitativa SOXL (Modo: {modo})...")
     
     csv_filename = "soxl_predictions.csv"
+    today_str = now_time.strftime('%Y-%m-%d')
+    
+    # CRITICAL FIX: Safe global baseline initialization outside of the try block
+    preds = {"Low": 0.0, "High": 0.0, "Close": 0.0, "Real": 0.0, "Tendencia": "Estable"}
+    es_real = False
     
     tickers_indice = [
         "NVDA", "MU", "AMD", "AVGO", "INTC", "AMAT", "TSM", "MRVL", "LRCX", "KLAC", "QCOM", "ASML",
@@ -62,8 +67,16 @@ def run_prediction():
             print("❌ Error: Yahoo Finance mass download blanked out.")
             return
 
+        # CRITICAL FIX: Flawless cross-sectional extraction handler for structural MultiIndex tables
         def extraer_tabla(ticker):
-            df = raw_data[ticker].copy() if ticker in raw_data.columns.levels else pd.DataFrame()
+            if isinstance(raw_data.columns, pd.MultiIndex):
+                if ticker in raw_data.columns.levels[0]:
+                    df = raw_data.xs(ticker, axis=1, level=0).copy()
+                else:
+                    return pd.DataFrame()
+            else:
+                df = raw_data[ticker].copy() if ticker in raw_data.columns else pd.DataFrame()
+                
             if not df.empty:
                 df.columns = [str(col).capitalize() for col in df.columns]
                 if df.index.tz is not None: df.index = df.index.tz_localize(None)
@@ -83,9 +96,6 @@ def run_prediction():
         today_str = hoy_date.strftime('%Y-%m-%d')
         print(f"📅 Operational target date: {today_str}")
         
-        preds = {"Low": 0.0, "High": 0.0, "Close": 0.0, "Real": 0.0, "Tendencia": "Estable"}
-        es_real = False
-        
         # --- TRUE RENORMALIZED MATRIX WEIGHTING FIX ---
         retornos_componentes = []
         tickers_descargados = []
@@ -102,11 +112,9 @@ def run_prediction():
         pesos_normalizados = {k: pesos_base[k] / suma_pesos_validos for k in tickers_descargados}
         pesos_array = [pesos_normalizados[t] for t in tickers_descargados]
         
-        # Fixed weighted tracking index vectorisation
         df_concat = pd.concat(retornos_componentes, axis=1)
         df_retornos_historicos = df_concat.mul(pesos_array, axis=1).sum(axis=1)
         
-        # Map tracking arrays onto the master SOXL target DataFrame
         df_soxl['index_trend_1h'] = df_retornos_historicos
         df_soxl['vol_ratio'] = df_soxl['Volume'].rolling(12).sum() / df_soxl['Volume'].rolling(78).mean()
         df_soxl['nasdaq_trend'] = df_nasdaq['Close'].pct_change(12)
@@ -118,24 +126,20 @@ def run_prediction():
         print(f"⏱️ Filtering macro history slices strictly at: {hora_corte}")
         snapshot_historico = df_soxl[df_soxl['Hora_Minuto'] == hora_corte].copy()
         
-        # --- IN-SAMPLE CONTAMINATION FIX: ISOLATE TODAY BEFORE TRAINING ---
         fila_hoy = snapshot_historico[snapshot_historico['Fecha'] == hoy_date]
         columnas_features = ['Open', 'Volume', 'index_trend_1h', 'vol_ratio', 'nasdaq_trend', 'vix_level']
         
-        # Target profile definitions for full-day closures
         daily_targets = df_soxl.resample('1D').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
         snapshot_historico['Target_High'] = snapshot_historico['Fecha'].map(daily_targets['High'] - daily_targets['Open'])
         snapshot_historico['Target_Low'] = snapshot_historico['Fecha'].map(daily_targets['Low'] - daily_targets['Open'])
         snapshot_historico['Target_Close'] = snapshot_historico['Fecha'].map(daily_targets['Close'] - daily_targets['Open'])
         
-        # Exclude today entirely from training rows
         df_entrenamiento = snapshot_historico[snapshot_historico['Fecha'] != hoy_date]
         df_entrenamiento = df_entrenamiento[columnas_features + ['Target_High', 'Target_Low', 'Target_Close']].dropna()
         
         X = df_entrenamiento[columnas_features]
         x_last = fila_hoy[columnas_features].tail(1)
         
-        # High statistical threshold condition to block market noise training
         if len(X) >= 20 and not x_last.empty:
             print(f"🧠 Training out-of-sample models via {len(X)} historic snapshots...")
             params = {
