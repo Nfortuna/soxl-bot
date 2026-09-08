@@ -11,7 +11,7 @@ def enviar_telegram(mensaje):
         try:
             requests.post(url, json={"chat_id": chat_id, "text": mensaje, "parse_mode": "Markdown"})
         except Exception as e:
-            print(f"⚠️ No se pudo enviar reporte scalper a Telegram: {e}")
+            print(f"⚠️ No se pudo enviar reporte a Telegram: {e}")
 
 def auditar_scalper():
     print("⚡ Iniciando Backtest Walk-Forward para el Motor Intradía Pro-Scalper...")
@@ -24,8 +24,16 @@ def auditar_scalper():
         
     try:
         df = pd.read_csv(csv_filename, index_col=0)
-        df.columns = [str(col).capitalize() for col in df.columns]
-        df = df[df['Actual'] > 0]
+        
+        col_actual = [c for col in df.columns if 'actual' in str(col).lower()]
+        col_cambio = [c for col in df.columns if 'cambio' in str(col).lower()]
+        
+        if not col_actual or not col_cambio:
+            print("⏳ Estructurando columnas del Scalper...")
+            return
+            
+        c_actual, c_cambio = col_actual[0], col_cambio[0]
+        df = df[df[c_actual] > 0]
         
         if len(df) < 5:
             msg = f"⚡ *AUDITORÍA WALK-FORWARD: SCALPER*\n\n⏳ Muestras insuficientes ({len(df)}/5). Acumulando historial..."
@@ -33,11 +41,11 @@ def auditar_scalper():
             enviar_telegram(msg)
             return
             
-        df['Precio_Real_Futuro'] = df['Actual'].shift(-1)
-        df['Cambio_Real_Neto'] = df['Precio_Real_Futuro'] - df['Actual']
+        df['Precio_Real_Futuro'] = df[c_actual].shift(-1)
+        df['Cambio_Real_Neto'] = df['Precio_Real_Futuro'] - df[c_actual]
         df.dropna(subset=['Cambio_Real_Neto'], inplace=True)
         
-        df['Dir_Predicha'] = np.where(df['Proyectado_cambio_10m'] > 0, 1, -1)
+        df['Dir_Predicha'] = np.where(df[c_cambio] > 0, 1, -1)
         df['Dir_Real'] = np.where(df['Cambio_Real_Neto'] > 0, 1, -1)
         
         df['Acierto_Bruto'] = df['Dir_Predicha'] == df['Dir_Real']
