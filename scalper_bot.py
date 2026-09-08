@@ -24,16 +24,20 @@ def calcular_atr(df, period=14):
     true_range = df_tr.max(axis=1)
     return true_range.rolling(period).mean()
 
-def descargar_activo_seguro(ticker, period="10d", prepost=False):
-    """Descarga datos de forma aislada y reporta fallos específicos por activo."""
+def descargar_activo_seguro(ticker, period="7d", prepost=False):
+    """Descarga datos de forma aislada y limpia la estructura de columnas."""
     try:
-        df = yf.download(ticker, period=period, interval="1m", prepost=prepost)
+        df = yf.download(ticker, period=period, interval="1m", prepost=prepost, progress=False)
         if df.empty:
             print(f"⚠️ Alerta: Yahoo Finance devolvió datos vacíos para {ticker}")
             return pd.DataFrame()
         
+        # Limpieza definitiva de MultiIndex si yfinance lo inyecta por defecto
         if isinstance(df.columns, pd.MultiIndex):
-            df = df[ticker]
+            if ticker in df.columns.levels[1]:
+                df = df.xs(ticker, axis=1, level=1)
+            elif ticker in df.columns.levels[0]:
+                df = df[ticker]
             
         if df.index.tz is not None:
             df.index = df.index.tz_localize(None)
@@ -53,14 +57,14 @@ def run_scalper():
     hora_key = datetime.datetime.now().strftime("%H:%M")
     id_registro = f"{today_str}_{hora_key}"
     
-    # Añadidas las columnas de variables macro al diccionario histórico
     preds = {
         "Actual": 0.0, "Proyectado_10m": 0.0, "Tendencia": "Estable", 
         "Sesgo_VWAP": "Neutro", "Impulso": "Neutro", "Senal_Alerta": "Normal",
-        "Nivel_Nasdaq": 0.0, "Nivel_VIX": 0.0 # Nuevos campos de auditoría
+        "Nivel_Nasdaq": 0.0, "Nivel_VIX": 0.0
     }
     es_real = False
     
+    # Descargas individuales limpias y seguras con el límite máximo de 7 días
     df_soxl = descargar_activo_seguro("SOXL", period="7d")
     df_qqq = descargar_activo_seguro("QQQ", period="7d")
     df_nvda = descargar_activo_seguro("NVDA", period="7d")
@@ -68,7 +72,6 @@ def run_scalper():
     df_msft = descargar_activo_seguro("MSFT", period="7d")
     df_nasdaq_raw = descargar_activo_seguro("^IXIC", period="2d")
     df_vix_raw = descargar_activo_seguro("^VIX", period="2d")
-
     
     if not df_soxl.empty and not df_qqq.empty and not df_nvda.empty and not df_nasdaq_raw.empty and not df_vix_raw.empty:
         try:
@@ -109,16 +112,16 @@ def run_scalper():
                 ultimo_bloque = df_soxl[columnas_features].tail(1)
                 dlast = xgb.DMatrix(ultimo_bloque)
                 
-                preds["Actual"] = round(float(ultimo_bloque['Close'].iloc[0]), 2)
+                preds["Actual"] = round(float(ultimo_bloque['Close'].iloc[-1]), 2)
                 preds["Proyectado_10m"] = round(float(model.predict(dlast)[0]), 2)
                 preds["Tendencia"] = "Alza" if preds["Proyectado_10m"] > preds["Actual"] else "Baja"
                 
                 ultimo_precio = preds["Actual"]
-                ultimo_vwap = round(float(ultimo_bloque['VWAP'].iloc[0]), 2)
-                ultima_ema9 = float(ultimo_bloque['EMA_9'].iloc[0])
-                ultima_ema21 = float(ultimo_bloque['EMA_21'].iloc[0])
-                ultimo_macd_hist = float(ultimo_bloque['MACD_Hist'].iloc[0])
-                ultimo_atr = float(ultimo_bloque['ATR'].iloc[0])
+                ultimo_vwap = round(float(ultimo_bloque['VWAP'].iloc[-1]), 2)
+                ultima_ema9 = float(ultimo_bloque['EMA_9'].iloc[-1])
+                ultima_ema21 = float(ultimo_bloque['EMA_21'].iloc[-1])
+                ultimo_macd_hist = float(ultimo_bloque['MACD_Hist'].iloc[-1])
+                ultimo_atr = float(ultimo_bloque['ATR'].iloc[-1])
                 
                 preds["Sesgo_VWAP"] = "COMPRADORES" if ultimo_precio > ultimo_vwap else "VENDEDORES"
                 
@@ -145,21 +148,20 @@ def run_scalper():
                 else:
                     preds["Senal_Alerta"] = "NORMAL"
                 
-                # Capturar e integrar los niveles macro de cierre de último minuto
                 preds["Nivel_Nasdaq"] = round(float(df_nasdaq_raw['Close'].iloc[-1]), 2)
                 preds["Nivel_VIX"] = round(float(df_vix_raw['Close'].iloc[-1]), 2)
                 es_real = True
         except Exception as e:
-            print(f"❌ Error en procesamiento: {e}")
+            print(f"❌ Error en procesamiento técnico interno: {e}")
             
     # Escritura en la base de datos CSV histórica
     pred_df = pd.DataFrame([preds], index=[id_registro])
     file_exists = os.path.exists(csv_filename)
     pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
     
-    # Formateo para Telegram
+    # Formateo estructurado para Telegram
     hora_actual = datetime.datetime.now().strftime("%I:%M %p")
-    tipo_data = "Indicadores Estratégicos Consolidados" if es_real else "⚠️ Valores de Contingencia"
+    tipo_data = "Indicadores Estratégicos Consolidados" if es_real else "⚠️ Valores de Contingencia por Fallo"
     icon_tendencia = "🟢" if preds["Tendencia"] == "Alza" else "🔴"
     
     with open("telegram_scalper_msg.txt", "w", encoding="utf-8") as f:
