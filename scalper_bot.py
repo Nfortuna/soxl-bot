@@ -196,4 +196,3 @@ def run_scalper():
 
 if __name__ == "__main__":
     run_scalper()
-v
