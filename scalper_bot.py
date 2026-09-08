@@ -27,19 +27,13 @@ def calcular_atr(df, period=14):
     return true_range.rolling(period).mean()
 
 def descargar_activo_seguro(ticker, period="7d", prepost=False):
-    """Descarga datos de forma aislada y limpia la estructura de columnas."""
+    """Descarga datos de forma aislada forzando un formato de tabla plana plano."""
     try:
-        df = yf.download(ticker, period=period, interval="1m", prepost=prepost, progress=False)
+        # keepmulti=False destruye los MultiIndex problemáticos directamente en el servidor de Yahoo
+        df = yf.download(ticker, period=period, interval="1m", prepost=prepost, progress=False, keepmulti=False)
         if df.empty:
             print(f"⚠️ Alerta: Yahoo Finance devolvió datos vacíos para {ticker}")
             return pd.DataFrame()
-        
-        # Limpieza de MultiIndex si yfinance lo inyecta por defecto
-        if isinstance(df.columns, pd.MultiIndex):
-            if ticker in df.columns.levels:
-                df = df.xs(ticker, axis=1, level=1)
-            elif ticker in df.columns.levels:
-                df = df[ticker]
             
         if df.index.tz is not None:
             df.index = df.index.tz_localize(None)
@@ -66,7 +60,7 @@ def run_scalper():
     }
     es_real = False
     
-    # Descargas individuales de 7 días
+    # Descargas individuales limpias usando el bypass plano
     df_soxl = descargar_activo_seguro("SOXL", period="7d")
     df_qqq = descargar_activo_seguro("QQQ", period="7d")
     df_nvda = descargar_activo_seguro("NVDA", period="7d")
@@ -98,7 +92,6 @@ def run_scalper():
             df_soxl['aapl_trend_1m'] = df_aapl['Close'].pct_change(1)
             df_soxl['msft_trend_1m'] = df_msft['Close'].pct_change(1)
             
-            # Target futuro a 10 minutos
             df_soxl['Target_10m'] = df_soxl['Close'].shift(-10)
             
             columnas_features = [
@@ -106,8 +99,7 @@ def run_scalper():
                 'qqq_trend_1m', 'nvda_trend_1m', 'aapl_trend_1m', 'msft_trend_1m'
             ]
             
-            # --- CORRECCIÓN CRÍTICA DE BLINDAJE ---
-            # Filtramos X e y de manera conjunta asegurándonos de eliminar cualquier NaN en el Target
+            # Limpieza estricta de filas vacías futuras
             df_limpio = df_soxl[columnas_features + ['Target_10m']].dropna()
             
             X = df_limpio[columnas_features]
@@ -117,7 +109,6 @@ def run_scalper():
                 dtrain = xgb.DMatrix(X, label=y)
                 model = xgb.train({'objective':'reg:squarederror', 'max_depth':3, 'eta':0.1}, dtrain, num_boost_round=30)
                 
-                # Para la predicción en tiempo real tomamos la última fila real disponible (que sí tiene las features del minuto actual)
                 ultimo_bloque = df_soxl[columnas_features].tail(1)
                 dlast = xgb.DMatrix(ultimo_bloque)
                 
