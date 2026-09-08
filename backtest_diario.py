@@ -11,7 +11,7 @@ def enviar_telegram(mensaje):
         try:
             requests.post(url, json={"chat_id": chat_id, "text": mensaje, "parse_mode": "Markdown"})
         except Exception as e:
-            print(f"⚠️ No se pudo enviar reporte diario a Telegram: {e}")
+            print(f"⚠️ No se pudo enviar reporte a Telegram: {e}")
 
 def auditar_modelo_diario():
     print("📊 Iniciando Backtest Walk-Forward para el Modelo Macro Diario...")
@@ -24,20 +24,28 @@ def auditar_modelo_diario():
     try:
         df = pd.read_csv(csv_filename, index_col=0)
         
-        # NORMALIZACIÓN CRÍTICA: Forzar mayúsculas en las columnas para evitar el error 'High'
-        df.columns = [str(col).capitalize() for col in df.columns]
+        # Mapeo dinámico para encontrar la columna High sin importar cómo se guardó antes
+        col_high = [c for col in df.columns if 'high' in str(col).lower()]
+        col_close = [c for col in df.columns if 'close' in str(col).lower()]
+        col_real = [c for col in df.columns if 'real' in str(col).lower()]
         
-        # Eliminar filas vacías o de contingencia iniciales en cero
-        df = df[(df['High'] > 0) & (df['Real'] > 0)]
+        if not col_high or not col_close or not col_real:
+            print(f"⏳ Columnas detectadas: {list(df.columns)}. Esperando acumulación de nuevas filas.")
+            return
+            
+        c_high, c_close, c_real = col_high[0], col_close[0], col_real[0]
         
-        if len(df) < 3:
+        # Filtrar solo filas con datos válidos mayores a cero
+        df = df[(df[c_high] > 0) & (df[c_real] > 0)]
+        
+        if len(df) < 2:
             print("⏳ Muestras insuficientes en soxl_predictions.csv.")
             return
             
         df['Fecha_Dia'] = df.index.str.split('_').str[0]
-        df['Momento'] = df.index.str.split('_').str[1]
+        df['Momento'] = df.index.str.split('_').str[-1]
         
-        cierres_reales = df[df['Momento'] == 'CIERRE'][['Fecha_Dia', 'Real']].rename(columns={'Real': 'Cierre_Real_Definitivo'})
+        cierres_reales = df[df['Momento'] == 'CIERRE'][['Fecha_Dia', c_real]].rename(columns={c_real: 'Cierre_Real_Definitivo'})
         df = df.merge(cierres_reales, on='Fecha_Dia', how='left')
         df.dropna(subset=['Cierre_Real_Definitivo'], inplace=True)
         
@@ -45,7 +53,7 @@ def auditar_modelo_diario():
             print("⏳ Esperando cierres completos para auditar...")
             return
             
-        df['Acierto_Direccional'] = np.sign(df['Close'] - df['Real']) == np.sign(df['Cierre_Real_Definitivo'] - df['Real'])
+        df['Acierto_Direccional'] = np.sign(df[c_close] - df[c_real]) == np.sign(df['Cierre_Real_Definitivo'] - df[c_real])
         win_rate_macro = df['Acierto_Direccional'].mean() * 100
         
         reporte = (
