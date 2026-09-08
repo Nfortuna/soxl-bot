@@ -61,13 +61,14 @@ def run_scalper():
     }
     es_real = False
     
-    df_soxl = descargar_activo_seguro("SOXL", period="10d")
-    df_qqq = descargar_activo_seguro("QQQ", period="10d")
-    df_nvda = descargar_activo_seguro("NVDA", period="10d")
-    df_aapl = descargar_activo_seguro("AAPL", period="10d")
-    df_msft = descargar_activo_seguro("MSFT", period="10d")
+    df_soxl = descargar_activo_seguro("SOXL", period="7d")
+    df_qqq = descargar_activo_seguro("QQQ", period="7d")
+    df_nvda = descargar_activo_seguro("NVDA", period="7d")
+    df_aapl = descargar_activo_seguro("AAPL", period="7d")
+    df_msft = descargar_activo_seguro("MSFT", period="7d")
     df_nasdaq_raw = descargar_activo_seguro("^IXIC", period="2d")
     df_vix_raw = descargar_activo_seguro("^VIX", period="2d")
+
     
     if not df_soxl.empty and not df_qqq.empty and not df_nvda.empty and not df_nasdaq_raw.empty and not df_vix_raw.empty:
         try:
