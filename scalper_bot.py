@@ -27,23 +27,33 @@ def calcular_atr(df, period=14):
     return true_range.rolling(period).mean()
 
 def descargar_activo_seguro(ticker, period="7d", prepost=False):
-    """Descarga datos de forma aislada y aplana las columnas de manera segura."""
+    """Descarga datos de forma aislada y normaliza forzosamente los nombres de las columnas."""
     try:
-        # Descarga estándar limpia compatible con todas las versiones de yfinance
         df = yf.download(ticker, period=period, interval="1m", prepost=prepost, progress=False)
         if df.empty:
             print(f"⚠️ Alerta: Yahoo Finance devolvió datos vacíos para {ticker}")
             return pd.DataFrame()
         
-        # Aplanar columnas de forma segura sin importar si es MultiIndex o plano
-        df.columns = df.columns.get_level_values(-1)
+        # NORMALIZACIÓN: Si viene con MultiIndex, extraemos el nivel más bajo
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
+        # Forzar nombres estándar con primera letra mayúscula para evitar variaciones de yfinance
+        df.columns = [str(col).capitalize() for col in df.columns]
+        
+        # Validar columnas críticas
+        columnas_necesarias = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in df.columns for col in columnas_necesarias):
+            print(f"⚠️ Columnas detectadas para {ticker}: {list(df.columns)}")
+            # Intento de mapeo alternativo si vienen indexadas por ticker
+            df = df.rename(columns=lambda x: str(x).split('_')[-1].capitalize())
             
         if df.index.tz is not None:
             df.index = df.index.tz_localize(None)
             
         df.ffill(inplace=True)
         df.bfill(inplace=True)
-        return df
+        return df[columnas_necesarias] # Retornamos solo la estructura limpia estricta
     except Exception as e:
         print(f"❌ Error crítico al descargar o procesar el activo {ticker}: {e}")
         return pd.DataFrame()
@@ -63,7 +73,7 @@ def run_scalper():
     }
     es_real = False
     
-    # Descargas individuales de 7 días con aplanado nativo de Pandas
+    # Descargas individuales de 7 días con mapeo forzado e inmune a cambios de API
     df_soxl = descargar_activo_seguro("SOXL", period="7d")
     df_qqq = descargar_activo_seguro("QQQ", period="7d")
     df_nvda = descargar_activo_seguro("NVDA", period="7d")
@@ -103,7 +113,6 @@ def run_scalper():
                 'qqq_trend_1m', 'nvda_trend_1m', 'aapl_trend_1m', 'msft_trend_1m'
             ]
             
-            # Limpieza estricta de filas vacías futuras
             df_limpio = df_soxl[columnas_features + ['Target_10m']].dropna()
             
             X = df_limpio[columnas_features]
@@ -187,3 +196,4 @@ def run_scalper():
 
 if __name__ == "__main__":
     run_scalper()
+v
