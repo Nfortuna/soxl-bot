@@ -5,14 +5,40 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 
+def descargar_activo_seguro(ticker, period="60d", interval="5m", prepost=False):
+    """Downloads intraday bars and flattens column structures safely."""
+    try:
+        df = yf.download(ticker, period=period, interval=interval, prepost=prepost, progress=False)
+        if df.empty:
+            print(f"⚠️ Warning: Empty table received for {ticker}")
+            return pd.DataFrame()
+        
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
+        df.columns = [str(col).capitalize() for col in df.columns]
+        columnas_necesarias = ['Open', 'High', 'Low', 'Close', 'Volume']
+        
+        if not all(col in df.columns for col in columnas_necesarias):
+            df = df.rename(columns=lambda x: str(x).split('_')[-1].capitalize())
+            
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+            
+        df.ffill(inplace=True)
+        df.bfill(inplace=True)
+        return df[columnas_necesarias]
+    except Exception as e:
+        print(f"❌ Critical download error for {ticker}: {e}")
+        return pd.DataFrame()
+
 def run_prediction():
     modo = os.getenv("HORARIO_EJECUCION", "CIERRE")
     now_time = datetime.datetime.now()
-    print(f"[{now_time.strftime('%Y-%m-%d %H:%M:%S')}] Iniciando Sincronización Cuantitativa SOXL (Modo: {modo})...")
+    print(f"[{now_time.strftime('%Y-%m-%d %H:%M:%S')}] Starting Sincronizacion Cuantitativa SOXL (Modo: {modo})...")
     
     csv_filename = "soxl_predictions.csv"
     
-    # Lista Oficial de Componentes
     tickers_indice = [
         "NVDA", "MU", "AMD", "AVGO", "INTC", "AMAT", "TSM", "MRVL", "LRCX", "KLAC", "QCOM", "ASML",
         "TXN", "ADI", "MCHP", "NXPI", "ON", "MPWR", "CRUS", "DIOD", "LSCC", "RMBS", "SLAB", "WOLF",
@@ -28,19 +54,16 @@ def run_prediction():
         if t not in pesos_base: pesos_base[t] = 0.0077
 
     try:
-        print("📥 Descargando matriz de mercado completa en un solo bloque de red...")
+        print("📥 Downloading unified market block via single corporate API call...")
         incluir_premarket = True if modo == "APERTURA" else False
-        
-        # Descarga masiva para evitar rate-limiting e incrementar velocidad
         raw_data = yf.download(all_tickers, period="60d", interval="5m", prepost=incluir_premarket, group_by='ticker', progress=False)
         
         if raw_data.empty:
-            print("❌ Error: Yahoo Finance no devolvió datos para el bloque masivo.")
+            print("❌ Error: Yahoo Finance mass download blanked out.")
             return
 
-        # Descomprimir dataframes planos individuales de forma segura
         def extraer_tabla(ticker):
-            df = raw_data[ticker].copy() if ticker in raw_data.columns.levels[0] else pd.DataFrame()
+            df = raw_data[ticker].copy() if ticker in raw_data.columns.levels else pd.DataFrame()
             if not df.empty:
                 df.columns = [str(col).capitalize() for col in df.columns]
                 if df.index.tz is not None: df.index = df.index.tz_localize(None)
@@ -53,18 +76,19 @@ def run_prediction():
         df_vix = extraer_tabla("^VIX").reindex(df_soxl.index, method='ffill')
         
         if df_soxl.empty:
-            print("❌ Error: Tabla de SOXL vacía.")
+            print("❌ Error: SOXL mapping block failed.")
             return
 
-        today = df_soxl.index[-1].strftime('%Y-%m-%d')
-        print(f"📅 Fecha operativa identificada: {today}")
+        hoy_date = df_soxl.index[-1].date()
+        today_str = hoy_date.strftime('%Y-%m-%d')
+        print(f"📅 Operational target date: {today_str}")
         
-        preds = {"Low": 0.0, "High": 0.0, "Close": 0.0, "Real": 0.0, "Close Real": 0.0, "Tendencia": "Estable"}
+        preds = {"Low": 0.0, "High": 0.0, "Close": 0.0, "Real": 0.0, "Tendencia": "Estable"}
         es_real = False
         
-        # --- RECONSTRUCCIÓN DE COMPONENTES CON RENORMALIZACIÓN DE PESOS ---
+        # --- TRUE RENORMALIZED MATRIX WEIGHTING FIX ---
         retornos_componentes = []
-        pesos_validos = {}
+        tickers_descargados = []
         suma_pesos_validos = 0.0
         
         for t in tickers_indice:
@@ -72,14 +96,17 @@ def run_prediction():
             if not df_t.empty:
                 df_t = df_t.reindex(df_soxl.index, method='ffill')
                 retornos_componentes.append(df_t['Close'].pct_change(12))
-                pesos_validos[t] = pesos_base[t]
+                tickers_descargados.append(t)
                 suma_pesos_validos += pesos_base[t]
         
-        # Renormalizar los pesos si algún activo falló la descarga
-        pesos_normalizados = {k: v / suma_pesos_validos for k, v in pesos_validos.items()}
-        df_retornos_historicos = pd.concat(retornos_componentes, axis=1).mean(axis=1)
+        pesos_normalizados = {k: pesos_base[k] / suma_pesos_validos for k in tickers_descargados}
+        pesos_array = [pesos_normalizados[t] for t in tickers_descargados]
         
-        # Inyectar features al dataframe de SOXL
+        # Fixed weighted tracking index vectorisation
+        df_concat = pd.concat(retornos_componentes, axis=1)
+        df_retornos_historicos = df_concat.mul(pesos_array, axis=1).sum(axis=1)
+        
+        # Map tracking arrays onto the master SOXL target DataFrame
         df_soxl['index_trend_1h'] = df_retornos_historicos
         df_soxl['vol_ratio'] = df_soxl['Volume'].rolling(12).sum() / df_soxl['Volume'].rolling(78).mean()
         df_soxl['nasdaq_trend'] = df_nasdaq['Close'].pct_change(12)
@@ -87,38 +114,37 @@ def run_prediction():
         df_soxl['Fecha'] = df_soxl.index.date
         df_soxl['Hora_Minuto'] = df_soxl.index.time
         
-        # --- SOLUCIÓN AL DATA LEAKAGE: FILTRADO POR VENTANA HORARIA ---
-        # Capturamos la hora exacta actual de la corrida de producción
         hora_corte = df_soxl.index[-1].time()
-        print(f"⏱️ Sincronizando ventana horaria histórica para entrenamiento a las: {hora_corte}")
-        
-        # Extraemos solo las fotos instantáneas que corresponden a esta hora exacta en el pasado
+        print(f"⏱️ Filtering macro history slices strictly at: {hora_corte}")
         snapshot_historico = df_soxl[df_soxl['Hora_Minuto'] == hora_corte].copy()
         
-        # Targets macro diarios de salida real desde el Open diario
+        # --- IN-SAMPLE CONTAMINATION FIX: ISOLATE TODAY BEFORE TRAINING ---
+        fila_hoy = snapshot_historico[snapshot_historico['Fecha'] == hoy_date]
+        columnas_features = ['Open', 'Volume', 'index_trend_1h', 'vol_ratio', 'nasdaq_trend', 'vix_level']
+        
+        # Target profile definitions for full-day closures
         daily_targets = df_soxl.resample('1D').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last'}).dropna()
         snapshot_historico['Target_High'] = snapshot_historico['Fecha'].map(daily_targets['High'] - daily_targets['Open'])
         snapshot_historico['Target_Low'] = snapshot_historico['Fecha'].map(daily_targets['Low'] - daily_targets['Open'])
         snapshot_historico['Target_Close'] = snapshot_historico['Fecha'].map(daily_targets['Close'] - daily_targets['Open'])
         
-        columnas_features = ['Open', 'Volume', 'index_trend_1h', 'vol_ratio', 'nasdaq_trend', 'vix_level']
-        df_entrenamiento = snapshot_historico[columnas_features + ['Target_High', 'Target_Low', 'Target_Close']].dropna()
+        # Exclude today entirely from training rows
+        df_entrenamiento = snapshot_historico[snapshot_historico['Fecha'] != hoy_date]
+        df_entrenamiento = df_entrenamiento[columnas_features + ['Target_High', 'Target_Low', 'Target_Close']].dropna()
         
         X = df_entrenamiento[columnas_features]
+        x_last = fila_hoy[columnas_features].tail(1)
         
-        # Umbral estadístico elevado a mínimo 30 días para robustez institucional
-        if len(X) > 30:
-            print(f"🧠 Entrenando XGBoost con {len(X)} snapshots históricos libres de Leakage...")
+        # High statistical threshold condition to block market noise training
+        if len(X) >= 20 and not x_last.empty:
+            print(f"🧠 Training out-of-sample models via {len(X)} historic snapshots...")
             params = {
                 'objective': 'reg:squarederror', 'max_depth': 3, 'eta': 0.1,
                 'subsample': 0.8, 'colsample_bytree': 0.8, 'reg_lambda': 1.0
             }
-            
-            x_last = X.tail(1)
             dlast = xgb.DMatrix(x_last)
-            precio_apertura_hoy = float(df_soxl.loc[df_soxl['Fecha'] == df_soxl.index[-1].date(), 'Open'].iloc[0])
+            precio_apertura_hoy = float(fila_hoy['Open'].iloc[-1])
             
-            # Entrenamiento independiente por objetivo sin contaminación futura
             for target in ['High', 'Low', 'Close']:
                 dtrain = xgb.DMatrix(X, label=df_entrenamiento[f'Target_{target}'])
                 model = xgb.train(params, dtrain, num_boost_round=25)
@@ -128,43 +154,40 @@ def run_prediction():
                 if target == 'Close':
                     preds["Tendencia"] = "Alza" if pred_variacion > 0 else "Baja"
             
-            # --- CÁLCULOS PUREMENTE OBSERVACIONALES SIN MULTIPLIPLICADORES ARBITRARIOS ---
             preds["Real"] = round(float(df_soxl['Close'].iloc[-1]), 2)
-            preds["Close Real"] = preds["Close"] # El Close estimado actúa como el norte cuantitativo
             es_real = True
         else:
-            print(f"⏳ Registros insuficientes en la ventana horaria ({len(X)}/30). Esperando acumulación del historial.")
+            print(f"⏳ Insufficient historical alignment rows available ({len(X)}/20). Awaiting deeper log parsing.")
 
     except Exception as e:
-        print(f"❌ Error en procesamiento diario interno: {e}")
+        print(f"❌ Internal calculation anomaly caught: {e}")
         
-    print(f"🔮 Resultados Diarios (Sin Leakage): {preds}")
+    print(f"🔮 Clean Micro-Target Output Profile: {preds}")
     
-    # Escritura Segura CSV
     try:
-        id_registro = f"{today}_{modo}"
+        id_registro = f"{today_str}_{modo}"
         pred_df = pd.DataFrame([preds], index=[id_registro])
         file_exists = os.path.exists(csv_filename)
         pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
-        print("💾 Historial macro actualizado.")
+        print("💾 Macro log parsed securely to data array.")
     except Exception as csv_err:
-        print(f"⚠️ Alerta CSV bloqueado: {csv_err}")
+        print(f"⚠️ Write execution block: {csv_err}")
     
     encabezado = "☀️ REPORTE PRE-MERCADO SOXL" if modo == "APERTURA" else "📉 REPORTE PRE-CIERRE SOXL"
     icon_tendencia = "🟢" if preds["Tendencia"] == "Alza" else "🔴"
-    tipo_data = "Modelado Instantáneo Libre de Fuga (No-Leakage)" if es_real else "⚠️ Valores de Contingencia por Muestras"
+    tipo_data = "Modelado Cuantitativo Out-of-Sample Saneado" if es_real else "⚠️ Valores de Contingencia por Muestras"
     
     with open("telegram_msg.txt", "w", encoding="utf-8") as f:
         f.write(
             f"{encabezado}\n"
-            f"📅 Fecha de Analisis: {today}\n"
+            f"📅 Fecha de Analisis: {today_str}\n"
             f"🔹 Estado: {tipo_data}\n"
             f"{icon_tendencia} Tendencia del dia: {preds['Tendencia']}\n\n"
             f"📈 High estimado: {preds['High']}\n"
             f"📉 Low estimado: {preds['Low']}\n"
             f"🏁 Close estimado (IA): {preds['Close']}\n"
             f"📊 Real Actual: ${preds['Real']}\n\n"
-            f"💾 Historial de 30 activos alineado y limpio en GitHub."
+            f"💾 Historial de 30 activos alineado, renormalizado y limpio."
         )
 
 if __name__ == "__main__":
