@@ -2,15 +2,11 @@ name: "Ejecutar Scalper SOXL 30 Minutos"
 
 on:
   schedule:
-    - cron: '45 13 * * 1-5'
-    - cron: '0 14 * * 1-5'
-    - cron: '30 14 * * 1-5'
-    - cron: '30 15 * * 1-5'
-    - cron: '0 18 * * 1-5'
-    - cron: '30 18 * * 1-5'
-    - cron: '0 19 * * 1-5'
-    - cron: '30 19 * * 1-5'
-  workflow_dispatch:
+    # Se enciende automáticamente cada 30 minutos (en el minuto :00 y :30) 
+    # de lunes a viernes entre las 13:00 UTC y las 20:00 UTC (Horario Bursátil NY)
+    - cron: '0,30 13-20 * * 1-5'
+    
+  workflow_dispatch: # Permite probarlo manualmente cuando quieras
 
 permissions:
   contents: write
