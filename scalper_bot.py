@@ -27,13 +27,16 @@ def calcular_atr(df, period=14):
     return true_range.rolling(period).mean()
 
 def descargar_activo_seguro(ticker, period="7d", prepost=False):
-    """Descarga datos de forma aislada forzando un formato de tabla plana plano."""
+    """Descarga datos de forma aislada y aplana las columnas de manera segura."""
     try:
-        # keepmulti=False destruye los MultiIndex problemáticos directamente en el servidor de Yahoo
-        df = yf.download(ticker, period=period, interval="1m", prepost=prepost, progress=False, keepmulti=False)
+        # Descarga estándar limpia compatible con todas las versiones de yfinance
+        df = yf.download(ticker, period=period, interval="1m", prepost=prepost, progress=False)
         if df.empty:
             print(f"⚠️ Alerta: Yahoo Finance devolvió datos vacíos para {ticker}")
             return pd.DataFrame()
+        
+        # Aplanar columnas de forma segura sin importar si es MultiIndex o plano
+        df.columns = df.columns.get_level_values(-1)
             
         if df.index.tz is not None:
             df.index = df.index.tz_localize(None)
@@ -60,7 +63,7 @@ def run_scalper():
     }
     es_real = False
     
-    # Descargas individuales limpias usando el bypass plano
+    # Descargas individuales de 7 días con aplanado nativo de Pandas
     df_soxl = descargar_activo_seguro("SOXL", period="7d")
     df_qqq = descargar_activo_seguro("QQQ", period="7d")
     df_nvda = descargar_activo_seguro("NVDA", period="7d")
@@ -92,6 +95,7 @@ def run_scalper():
             df_soxl['aapl_trend_1m'] = df_aapl['Close'].pct_change(1)
             df_soxl['msft_trend_1m'] = df_msft['Close'].pct_change(1)
             
+            # Target futuro a 10 minutos
             df_soxl['Target_10m'] = df_soxl['Close'].shift(-10)
             
             columnas_features = [
