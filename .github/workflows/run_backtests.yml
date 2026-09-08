@@ -1,0 +1,26 @@
+name: "Correr Backtest Walk-Forward"
+
+on:
+  workflow_dispatch: # Allows you to trigger manual checks at any time via a button
+
+jobs:
+  run_evaluations:
+    name: Validacion Cruzada Out-of-Sample
+    runs-on: ubuntu-latest
+    steps:
+    - name: Clonar Repositorio
+      uses: actions/checkout@v4
+
+    - name: Configurar Entorno Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Instalar Librerias Base
+      run: pip install pandas numpy
+
+    - name: Procesar Backtest Bot Diario
+      run: python backtest_diario.py
+
+    - name: Procesar Backtest Bot Scalper
+      run: python backtest_scalper.py
