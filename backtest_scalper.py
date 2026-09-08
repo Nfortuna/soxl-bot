@@ -25,14 +25,16 @@ def auditar_scalper():
     try:
         df = pd.read_csv(csv_filename, index_col=0)
         
-        col_actual = [c for col in df.columns if 'actual' in str(col).lower()]
-        col_cambio = [c for col in df.columns if 'cambio' in str(col).lower()]
+        # CORRECCIÓN DE SINTAXIS: Uso correcto de la variable de mapeo 'col'
+        col_actual = [col for col in df.columns if 'actual' in str(col).lower()]
+        col_cambio = [col for col in df.columns if 'cambio' in str(col).lower()]
         
         if not col_actual or not col_cambio:
             print("⏳ Estructurando columnas del Scalper...")
             return
             
-        c_actual, c_cambio = col_actual[0], col_cambio[0]
+        c_actual = col_actual[0]
+        c_cambio = col_cambio[0]
         df = df[df[c_actual] > 0]
         
         if len(df) < 5:
