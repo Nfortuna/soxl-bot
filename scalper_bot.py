@@ -10,8 +10,10 @@ def calcular_vwap_diario(df):
     df_copy = df.copy()
     df_copy['Fecha'] = df_copy.index.date
     vp = df_copy['Close'] * df_copy['Volume']
+    
     df_copy['Cum_VP'] = vp.groupby(df_copy['Fecha']).cumsum()
     df_copy['Cum_Vol'] = df_copy['Volume'].groupby(df_copy['Fecha']).cumsum()
+    
     return df_copy['Cum_VP'] / df_copy['Cum_Vol'].replace(0, 1)
 
 def calcular_atr(df, period=14):
@@ -32,11 +34,11 @@ def descargar_activo_seguro(ticker, period="7d", prepost=False):
             print(f"⚠️ Alerta: Yahoo Finance devolvió datos vacíos para {ticker}")
             return pd.DataFrame()
         
-        # Limpieza definitiva de MultiIndex si yfinance lo inyecta por defecto
+        # Limpieza de MultiIndex si yfinance lo inyecta por defecto
         if isinstance(df.columns, pd.MultiIndex):
-            if ticker in df.columns.levels[1]:
+            if ticker in df.columns.levels:
                 df = df.xs(ticker, axis=1, level=1)
-            elif ticker in df.columns.levels[0]:
+            elif ticker in df.columns.levels:
                 df = df[ticker]
             
         if df.index.tz is not None:
@@ -64,7 +66,7 @@ def run_scalper():
     }
     es_real = False
     
-    # Descargas individuales limpias y seguras con el límite máximo de 7 días
+    # Descargas individuales de 7 días
     df_soxl = descargar_activo_seguro("SOXL", period="7d")
     df_qqq = descargar_activo_seguro("QQQ", period="7d")
     df_nvda = descargar_activo_seguro("NVDA", period="7d")
@@ -96,24 +98,31 @@ def run_scalper():
             df_soxl['aapl_trend_1m'] = df_aapl['Close'].pct_change(1)
             df_soxl['msft_trend_1m'] = df_msft['Close'].pct_change(1)
             
+            # Target futuro a 10 minutos
             df_soxl['Target_10m'] = df_soxl['Close'].shift(-10)
             
             columnas_features = [
                 'Close', 'Volume', 'VWAP', 'ATR', 'EMA_9', 'EMA_21', 'MACD_Hist',
                 'qqq_trend_1m', 'nvda_trend_1m', 'aapl_trend_1m', 'msft_trend_1m'
             ]
-            X = df_soxl[columnas_features].dropna()
-            y = df_soxl['Target_10m'].loc[X.index]
+            
+            # --- CORRECCIÓN CRÍTICA DE BLINDAJE ---
+            # Filtramos X e y de manera conjunta asegurándonos de eliminar cualquier NaN en el Target
+            df_limpio = df_soxl[columnas_features + ['Target_10m']].dropna()
+            
+            X = df_limpio[columnas_features]
+            y = df_limpio['Target_10m']
             
             if len(X) > 50:
                 dtrain = xgb.DMatrix(X, label=y)
                 model = xgb.train({'objective':'reg:squarederror', 'max_depth':3, 'eta':0.1}, dtrain, num_boost_round=30)
                 
+                # Para la predicción en tiempo real tomamos la última fila real disponible (que sí tiene las features del minuto actual)
                 ultimo_bloque = df_soxl[columnas_features].tail(1)
                 dlast = xgb.DMatrix(ultimo_bloque)
                 
                 preds["Actual"] = round(float(ultimo_bloque['Close'].iloc[-1]), 2)
-                preds["Proyectado_10m"] = round(float(model.predict(dlast)[0]), 2)
+                preds["Proyectado_10m"] = round(float(model.predict(dlast)), 2)
                 preds["Tendencia"] = "Alza" if preds["Proyectado_10m"] > preds["Actual"] else "Baja"
                 
                 ultimo_precio = preds["Actual"]
