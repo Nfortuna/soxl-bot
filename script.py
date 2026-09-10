@@ -16,17 +16,23 @@ tickers = [
 ny_tz = pytz.timezone("America/New_York")
 
 def enviar_alerta(mensaje):
-    # Validación estricta para evitar URL malformadas
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("[ERROR] Credenciales inválidas o ausentes en GitHub Secrets.")
+    # Verificación e impresión preventiva en la consola de GitHub
+    if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "":
+        print("[ALERTA CRÍTICA] El secreto 'TELEGRAM_TOKEN' está vacío o no está configurado en GitHub Secrets.")
         return
+    if not CHAT_ID or CHAT_ID == "":
+        print("[ALERTA CRÍTICA] El secreto 'TELEGRAM_CHAT_ID' está vacío o no está configurado en GitHub Secrets.")
+        return
+        
     try:
+        # Construcción segura de la URL oficial de la API de Telegram
         url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
         resp = requests.post(url, data={
             "chat_id": CHAT_ID,
             "text": mensaje,
             "parse_mode": "Markdown"
         }, timeout=10)
+        
         if resp.status_code != 200:
             print(f"[ERROR] API de Telegram rechazó el mensaje: {resp.text}")
     except Exception as e:
@@ -52,7 +58,7 @@ def calcular_pesos_reales_indice():
             market_caps[t] = 10_000_000_000
             
     # Ordenar de mayor a menor capitalización
-    ordenados = sorted(market_caps.items(), key=lambda item: item[1], reverse=True)
+    ordenados = sorted(market_caps.items(), key=lambda item: item, reverse=True)
     
     pesos_calculados = {}
     suma_inicial_top5 = sum([val for idx, (tk, val) in enumerate(ordenados) if idx < 5])
@@ -100,13 +106,13 @@ def calcular_manual():
         return
 
     p_real_val = df_soxl.iloc[-1]["Close"]
-    precio_real = float(p_real_val.iloc[0] if isinstance(p_real_val, pd.Series) else p_real_val)
+    precio_real = float(p_real_val.iloc if isinstance(p_real_val, pd.Series) else p_real_val)
     if pd.isna(precio_real) or precio_real == 0:
         enviar_alerta("❌ Precio real inválido.")
         return
 
-    p_open_val = df_soxl.iloc[0]["Open"]
-    precio_open_soxl = float(p_open_val.iloc[0] if isinstance(p_open_val, pd.Series) else p_open_val)
+    p_open_val = df_soxl.iloc["Open"]
+    precio_open_soxl = float(p_open_val.iloc if isinstance(p_open_val, pd.Series) else p_open_val)
 
     df_soxl_diario = diarios["SOXL"] if isinstance(diarios.columns, pd.MultiIndex) else diarios
     df_soxl_diario = df_soxl_diario.dropna(subset=["Close"])
@@ -116,11 +122,11 @@ def calcular_manual():
         return
         
     p_cierre_val = df_prev.iloc[-1]["Close"]
-    cierre_prev_soxl = float(p_cierre_val.iloc[0] if isinstance(p_cierre_val, pd.Series) else p_cierre_val)
+    cierre_prev_soxl = float(p_cierre_val.iloc if isinstance(p_cierre_val, pd.Series) else p_cierre_val)
     alto_prev_val = df_prev.iloc[-1]["High"]
-    alto_prev_soxl = float(alto_prev_val.iloc[0] if isinstance(alto_prev_val, pd.Series) else alto_prev_val)
+    alto_prev_soxl = float(alto_prev_val.iloc if isinstance(alto_prev_val, pd.Series) else alto_prev_val)
     bajo_prev_val = df_prev.iloc[-1]["Low"]
-    bajo_prev_soxl = float(bajo_prev_val.iloc[0] if isinstance(bajo_prev_val, pd.Series) else bajo_prev_val)
+    bajo_prev_soxl = float(bajo_prev_val.iloc if isinstance(bajo_prev_val, pd.Series) else bajo_prev_val)
 
     pivot = (alto_prev_soxl + bajo_prev_soxl + cierre_prev_soxl) / 3
     r1 = (2 * pivot) - bajo_prev_soxl
@@ -142,8 +148,8 @@ def calcular_manual():
             
             p_momento = df_intradia.iloc[-1]["Close"]
             c_prev = df_prev_t.iloc[-1]["Close"]
-            precio_momento = float(p_momento.iloc[0] if isinstance(p_momento, pd.Series) else p_momento)
-            cierre_prev = float(c_prev.iloc[0] if isinstance(c_prev, pd.Series) else c_prev)
+            precio_momento = float(p_momento.iloc if isinstance(p_momento, pd.Series) else p_momento)
+            cierre_prev = float(c_prev.iloc if isinstance(c_prev, pd.Series) else c_prev)
             
             if pd.isna(precio_momento) or pd.isna(cierre_prev) or cierre_prev == 0: continue
             
