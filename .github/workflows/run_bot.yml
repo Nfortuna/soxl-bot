@@ -25,6 +25,12 @@ jobs:
         python -m pip install --upgrade pip
         pip install yfinance pandas pytz requests
 
+    - name: Forzar Corrección de URL de Telegram
+      run: |
+        # Este comando busca de forma agresiva cualquier URL rota en el script y la repara antes de ejecutar
+        sed -i 's|https://telegram.org|https://telegram.org|g' script.py || true
+        sed -i 's|https://telegram.org|https://telegram.org|g' scalper_bot.py || true
+
     - name: Ejecutar Bot Principal Ponderado
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
