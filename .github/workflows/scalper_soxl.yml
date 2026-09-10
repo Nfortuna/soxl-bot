@@ -8,6 +8,9 @@ on:
 jobs:
   run-scalper:
     runs-on: ubuntu-latest
+    # Forzar al entorno a heredar permisos de secretos de manera explícita
+    permissions:
+      contents: read
 
     steps:
     - name: Clonar el Repositorio
@@ -16,7 +19,7 @@ jobs:
     - name: Configurar Entorno de Python
       uses: actions/setup-python@v5 
       with:
-        python-version: '3.11' # Se eliminó la línea de caché para solucionar el error
+        python-version: '3.11'
 
     - name: Instalar Dependencias del Mercado
       run: |
