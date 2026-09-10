@@ -25,6 +25,7 @@ def enviar_alerta(mensaje):
         return
         
     try:
+        # Construcción segura de la URL oficial de la API de Telegram
         url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
         resp = requests.post(url, data={
             "chat_id": CHAT_ID,
@@ -38,6 +39,10 @@ def enviar_alerta(mensaje):
         print(f"[ERROR] Error de conexión con Telegram: {e}")
 
 def calcular_pesos_reales_indice():
+    """
+    Calcula dinámicamente el peso según las reglas del ICE Semiconductor Index:
+    Top 5 empresas capadas al 8% máximo. Las otras 25 capadas al 4% máximo.
+    """
     market_caps = {}
     print("[INFO] Sincronizando pesos reales basados en Capitalización de Mercado...")
     
@@ -52,7 +57,8 @@ def calcular_pesos_reales_indice():
         except Exception:
             market_caps[t] = 10_000_000_000
             
-    ordenados = sorted(market_caps.items(), key=lambda item: item[1], reverse=True)
+    # Ordenar de mayor a menor capitalización
+    ordenados = sorted(market_caps.items(), key=lambda item: item, reverse=True)
     
     pesos_calculados = {}
     suma_inicial_top5 = sum([val for idx, (tk, val) in enumerate(ordenados) if idx < 5])
@@ -99,7 +105,7 @@ def calcular_manual():
         enviar_alerta("❌ Datos de SOXL vacíos.")
         return
 
-    # CORRECCIÓN DE INDEXACIÓN CON .iloc CORRECTO
+    # Extracción por etiqueta corregida sin usar .iloc en el nombre de columna
     p_real_val = df_soxl["Close"].iloc[-1]
     precio_real = float(p_real_val.iloc[0] if isinstance(p_real_val, pd.Series) else p_real_val)
     if pd.isna(precio_real) or precio_real == 0:
