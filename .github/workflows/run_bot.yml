@@ -2,10 +2,8 @@ name: SOXL Bot Principal Automático
 
 on:
   schedule:
-    # Corre de lunes a viernes cada 5 minutos en desfase (minutos 2, 7, 12, 17...)
-    # Entre las 13:00 y las 21:00 UTC (Mercado NY)
     - cron: '2-57/5 13-21 * * 1-5'
-  workflow_dispatch: # Permite ejecución manual con un botón
+  workflow_dispatch: 
 
 jobs:
   run-main-bot:
@@ -18,8 +16,7 @@ jobs:
     - name: Configurar Entorno de Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
-        cache: 'pip'
+        python-version: '3.11' # Se eliminó la línea de caché para solucionar el error
 
     - name: Instalar Dependencias del Mercado
       run: |
