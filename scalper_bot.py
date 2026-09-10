@@ -3,8 +3,9 @@ import pandas as pd
 import os, requests, pytz, time
 from datetime import datetime
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# Limpieza preventiva de variables de entorno
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 tickers = [
     "NVDA","AVGO","MU","AMD","AMAT","MRVL","INTC","KLAC","MPWR","TER","ADI","NXPI",
@@ -15,8 +16,9 @@ tickers = [
 ny_tz = pytz.timezone("America/New_York")
 
 def enviar_alerta(mensaje):
+    # Validación estricta para evitar URL malformadas
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("[ERROR] Configuración de Telegram inválida.")
+        print("[ERROR] Credenciales inválidas o ausentes en GitHub Secrets.")
         return
     try:
         url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
@@ -24,11 +26,11 @@ def enviar_alerta(mensaje):
             "chat_id": CHAT_ID,
             "text": mensaje,
             "parse_mode": "Markdown"
-        })
+        }, timeout=10)
         if resp.status_code != 200:
-            print(f"[ERROR] Telegram falló: {resp.text}")
+            print(f"[ERROR] API de Telegram rechazó el mensaje: {resp.text}")
     except Exception as e:
-        print(f"[ERROR] Telegram: {e}")
+        print(f"[ERROR] Error de conexión con Telegram: {e}")
 
 def calcular_pesos_reales_indice():
     """
@@ -45,7 +47,7 @@ def calcular_pesos_reales_indice():
             if cap > 0:
                 market_caps[t] = cap
             else:
-                market_caps[t] = 10_000_000_000 # Proxy por si falla la API temporalmente
+                market_caps[t] = 10_000_000_000
         except Exception:
             market_caps[t] = 10_000_000_000
             
@@ -64,7 +66,6 @@ def calcular_pesos_reales_indice():
             peso_teorico = (cap_value / suma_inicial_resto) * 0.60
             pesos_calculados[ticker] = min(peso_teorico, 0.04)
             
-    # Normalizar para asegurar que la suma exacta dé 1.0 (100%)
     total_pesos = sum(pesos_calculados.values())
     for ticker in pesos_calculados:
         pesos_calculados[ticker] /= total_pesos
@@ -81,7 +82,6 @@ def calcular_manual():
         print("[INFO] Fuera de horario de mercado, no se envía alerta.")
         return
 
-    # 1. Obtener los pesos dinámicos del índice real
     pesos_reales = calcular_pesos_reales_indice()
 
     try:
@@ -91,7 +91,7 @@ def calcular_manual():
         time.sleep(1)
         diarios = yf.download(["SOXL"] + tickers, period="7d", interval="1d", group_by="ticker", progress=False)
     except Exception as e:
-        enviar_alerta(f"❌ Error al descargar datos: {e}")
+        enviar_alerta(f"❌ Error al descargar datos en scalper bot: {e}")
         return
 
     df_soxl = soxl_data["SOXL"] if isinstance(soxl_data.columns, pd.MultiIndex) else soxl_data
@@ -99,7 +99,6 @@ def calcular_manual():
         enviar_alerta("❌ Datos de SOXL vacíos.")
         return
 
-    # Extracción segura controlando Series
     p_real_val = df_soxl.iloc[-1]["Close"]
     precio_real = float(p_real_val.iloc[0] if isinstance(p_real_val, pd.Series) else p_real_val)
     if pd.isna(precio_real) or precio_real == 0:
@@ -108,9 +107,6 @@ def calcular_manual():
 
     p_open_val = df_soxl.iloc[0]["Open"]
     precio_open_soxl = float(p_open_val.iloc[0] if isinstance(p_open_val, pd.Series) else p_open_val)
-    if pd.isna(precio_open_soxl) or precio_open_soxl == 0:
-        enviar_alerta("❌ Apertura inválida de SOXL.")
-        return
 
     df_soxl_diario = diarios["SOXL"] if isinstance(diarios.columns, pd.MultiIndex) else diarios
     df_soxl_diario = df_soxl_diario.dropna(subset=["Close"])
@@ -126,7 +122,6 @@ def calcular_manual():
     bajo_prev_val = df_prev.iloc[-1]["Low"]
     bajo_prev_soxl = float(bajo_prev_val.iloc[0] if isinstance(bajo_prev_val, pd.Series) else bajo_prev_val)
 
-    # 2. Puntos Pivote (Soporte y Resistencia)
     pivot = (alto_prev_soxl + bajo_prev_soxl + cierre_prev_soxl) / 3
     r1 = (2 * pivot) - bajo_prev_soxl
     s1 = (2 * pivot) - alto_prev_soxl
@@ -136,7 +131,6 @@ def calcular_manual():
     variaciones, suma_pesos = [], 0.0
     componentes_msg = ""
     
-    # 3. Procesar las variaciones ponderadas
     for t in tickers:
         try:
             df_intradia = datos[t] if isinstance(datos.columns, pd.MultiIndex) else datos
@@ -157,7 +151,6 @@ def calcular_manual():
             variaciones.append(var_pct * pesos_reales[t])
             suma_pesos += pesos_reales[t]
             
-            # Formatear el desglose de los 4 principales
             if t in ["NVDA", "MU", "AMD", "AVGO"]:
                 signo = "+" if var_pct >= 0 else ""
                 componentes_msg += f"   • {t} ({pesos_reales[t]*100:.1f}%): ${precio_momento:.2f} ({signo}{var_pct:.2f}%)\n"
@@ -165,7 +158,7 @@ def calcular_manual():
             continue
 
     if suma_pesos == 0:
-        enviar_alerta("❌ No se pudo calcular variaciones.")
+        enviar_alerta("❌ No se pudo calcular variaciones en scalper bot.")
         return
 
     var_total = sum(variaciones) / suma_pesos
@@ -176,7 +169,6 @@ def calcular_manual():
     precio_estimated_open = precio_open_soxl * (1 + (var_total * 3)/100)
     desviacion_open = ((precio_estimated_open - precio_real) / precio_real) * 100
 
-    # 4. Construcción del Mensaje Unificado para Telegram
     signo_c = "+" if desviacion_close >= 0 else ""
     signo_o = "+" if desviacion_open >= 0 else ""
     
@@ -198,9 +190,6 @@ def calcular_manual():
     )
     
     enviar_alerta(mensaje)
-
-    with open("soxl_intradia_manual_unificado.txt", "w") as f:
-        f.write(mensaje)
 
 if __name__ == "__main__":
     calcular_manual()
