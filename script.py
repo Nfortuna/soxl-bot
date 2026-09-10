@@ -3,9 +3,9 @@ import pandas as pd
 import os, requests, pytz, time
 from datetime import datetime
 
-# Limpieza y captura estricta de las variables de entorno
+# LÍNEA CORREGIDA: Paréntesis de cierre añadido al final
 TELEGRAM_TOKEN = str(os.getenv("TELEGRAM_TOKEN", "")).strip()
-CHAT_ID = str(os.getenv("TELEGRAM_CHAT_ID", "").strip()
+CHAT_ID = str(os.getenv("TELEGRAM_CHAT_ID", "")).strip()
 
 tickers = [
     "NVDA","AVGO","MU","AMD","AMAT","MRVL","INTC","KLAC","MPWR","TER","ADI","NXPI",
@@ -101,14 +101,13 @@ def calcular_manual():
         return
 
     p_real_val = df_soxl["Close"].iloc[-1]
-    precio_real = float(p_real_val.iloc[0] if isinstance(p_real_val, pd.Series) else p_real_val)
+    precio_real = float(p_real_val.iloc if isinstance(p_real_val, pd.Series) else p_real_val)
     if pd.isna(precio_real) or precio_real == 0:
         enviar_alerta("❌ Precio real inválido.")
         return
 
-    # CORRECCIÓN DE INDEXACIÓN DEFINITIVA CON .iloc[0]
     p_open_val = df_soxl["Open"].iloc[0]
-    precio_open_soxl = float(p_open_val.iloc[0] if isinstance(p_open_val, pd.Series) else p_open_val)
+    precio_open_soxl = float(p_open_val.iloc if isinstance(p_open_val, pd.Series) else p_open_val)
 
     df_soxl_diario = diarios["SOXL"] if isinstance(diarios.columns, pd.MultiIndex) else diarios
     df_soxl_diario = df_soxl_diario.dropna(subset=["Close"])
@@ -118,11 +117,11 @@ def calcular_manual():
         return
         
     p_cierre_val = df_prev["Close"].iloc[-1]
-    cierre_prev_soxl = float(p_cierre_val.iloc[0] if isinstance(p_cierre_val, pd.Series) else p_cierre_val)
+    cierre_prev_soxl = float(p_cierre_val.iloc if isinstance(p_cierre_val, pd.Series) else p_cierre_val)
     alto_prev_val = df_prev["High"].iloc[-1]
-    alto_prev_soxl = float(alto_prev_val.iloc[0] if isinstance(alto_prev_val, pd.Series) else alto_prev_val)
+    alto_prev_soxl = float(alto_prev_val.iloc if isinstance(alto_prev_val, pd.Series) else alto_prev_val)
     bajo_prev_val = df_prev["Low"].iloc[-1]
-    bajo_prev_soxl = float(bajo_prev_val.iloc[0] if isinstance(bajo_prev_val, pd.Series) else bajo_prev_val)
+    bajo_prev_soxl = float(bajo_prev_val.iloc if isinstance(bajo_prev_val, pd.Series) else bajo_prev_val)
 
     pivot = (alto_prev_soxl + bajo_prev_soxl + cierre_prev_soxl) / 3
     r1 = (2 * pivot) - bajo_prev_soxl
@@ -144,8 +143,8 @@ def calcular_manual():
             
             p_momento = df_intradia["Close"].iloc[-1]
             c_prev = df_prev_t["Close"].iloc[-1]
-            precio_momento = float(p_momento.iloc[0] if isinstance(p_momento, pd.Series) else p_momento)
-            cierre_prev = float(c_prev.iloc[0] if isinstance(c_prev, pd.Series) else c_prev)
+            precio_momento = float(p_momento.iloc if isinstance(p_momento, pd.Series) else p_momento)
+            cierre_prev = float(c_prev.iloc if isinstance(c_prev, pd.Series) else c_prev)
             
             if pd.isna(precio_momento) or pd.isna(cierre_prev) or cierre_prev == 0: continue
             
