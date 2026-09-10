@@ -1,207 +1,206 @@
-import os
-import datetime
 import yfinance as yf
 import pandas as pd
-import numpy as np
-import xgboost as xgb
+import os, requests, pytz, time
+from datetime import datetime
 
-def calcular_vwap_diario(df):
-    """Calcula el VWAP de forma vectorizada reiniciándolo desde cero cada mañana."""
-    df_copy = df.copy()
-    df_copy['Fecha'] = df_copy.index.date
-    vp = df_copy['Close'] * df_copy['Volume']
-    df_copy['Cum_VP'] = vp.groupby(df_copy['Fecha']).cumsum()
-    df_copy['Cum_Vol'] = df_copy['Volume'].groupby(df_copy['Fecha']).cumsum()
-    return df_copy['Cum_VP'] / df_copy['Cum_Vol'].replace(0, 1)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-def calcular_atr(df, period=14):
-    """Calcula el Average True Range (ATR) para medir expansión de volatilidad."""
-    high_low = df['High'] - df['Low']
-    high_close_prev = np.abs(df['High'] - df['Close'].shift(1))
-    low_close_prev = np.abs(df['Low'] - df['Close'].shift(1))
-    df_tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1)
-    true_range = df_tr.max(axis=1)
-    return true_range.rolling(period).mean()
+tickers = [
+    "NVDA","AVGO","MU","AMD","AMAT","MRVL","INTC","KLAC","MPWR","TER","ADI","NXPI",
+    "TXN","MCHP","SWKS","QRVO","ON","ENPH","FSLR","TSM","ASX","STM","UMC","LSCC",
+    "OLED","RMBS","WOLF","SYNA","POWI","CRUS"
+]
 
-def descargar_activo_seguro(ticker, period="7d", prepost=False):
-    """Descarga datos de forma aislada y normaliza estrictamente las columnas."""
+ny_tz = pytz.timezone("America/New_York")
+
+def enviar_alerta(mensaje):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        print("[ERROR] Configuración de Telegram inválida.")
+        return
     try:
-        df = yf.download(ticker, period=period, interval="1m", prepost=prepost, progress=False)
-        if df.empty:
-            print(f"⚠️ Alerta: Yahoo Finance devolvió datos vacíos para {ticker}")
-            return pd.DataFrame()
-        
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
-        df.columns = [str(col).capitalize() for col in df.columns]
-        columnas_necesarias = ['Open', 'High', 'Low', 'Close', 'Volume']
-        
-        if not all(col in df.columns for col in columnas_necesarias):
-            print(f"❌ Error: {ticker} no contiene la estructura estándar.")
-            return pd.DataFrame()
-            
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
-            
-        df.ffill(inplace=True)
-        df.bfill(inplace=True)
-        return df[columnas_necesarias]
+        url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
+        resp = requests.post(url, data={
+            "chat_id": CHAT_ID,
+            "text": mensaje,
+            "parse_mode": "Markdown"
+        })
+        if resp.status_code != 200:
+            print(f"[ERROR] Telegram falló: {resp.text}")
     except Exception as e:
-        print(f"❌ Error crítico al descargar o procesar el activo {ticker}: {e}")
-        return pd.DataFrame()
+        print(f"[ERROR] Telegram: {e}")
 
-def run_scalper():
-    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Iniciando Pro-Scalper SOXL de Grado Cuantitativo Avanzado...")
+def calcular_pesos_reales_indice():
+    """
+    Calcula dinámicamente el peso según las reglas del ICE Semiconductor Index:
+    Top 5 empresas capadas al 8% máximo. Las otras 25 capadas al 4% máximo.
+    """
+    market_caps = {}
+    print("[INFO] Sincronizando pesos reales basados en Capitalización de Mercado...")
     
-    csv_filename = "scalper_predictions.csv"
-    today_str = datetime.date.today().strftime("%Y-%m-%d")
-    hora_key = datetime.datetime.now().strftime("%H:%M")
-    id_registro = f"{today_str}_{hora_key}"
-    
-    preds = {
-        "Actual": 0.0, "Proyectado_Cambio_10m": 0.0, "Tendencia": "Estable", 
-        "Sesgo_VWAP": "Neutro", "Impulso": "Neutro", "Senal_Alerta": "Normal",
-        "Nivel_Nasdaq": 0.0, "Nivel_VIX": 0.0
-    }
-    es_real = False
-    
-    df_soxl = descargar_activo_seguro("SOXL", period="7d")
-    df_qqq = descargar_activo_seguro("QQQ", period="7d")
-    df_nvda = descargar_activo_seguro("NVDA", period="7d")
-    df_aapl = descargar_activo_seguro("AAPL", period="7d")
-    df_msft = descargar_activo_seguro("MSFT", period="7d")
-    df_nasdaq_raw = descargar_activo_seguro("^IXIC", period="7d") 
-    df_vix_raw = descargar_activo_seguro("^VIX", period="7d")     
-    
-    if not df_soxl.empty and not df_qqq.empty and not df_nvda.empty and not df_nasdaq_raw.empty and not df_vix_raw.empty:
+    for t in tickers:
         try:
-            df_qqq = df_qqq.reindex(df_soxl.index, method='ffill')
-            df_nvda = df_nvda.reindex(df_soxl.index, method='ffill')
-            df_aapl = df_aapl.reindex(df_soxl.index, method='ffill')
-            df_msft = df_msft.reindex(df_soxl.index, method='ffill')
-            df_nasdaq = df_nasdaq_raw.reindex(df_soxl.index, method='ffill')
-            df_vix = df_vix_raw.reindex(df_soxl.index, method='ffill')
+            info = yf.Ticker(t).info
+            cap = info.get("marketCap", 0)
+            if cap > 0:
+                market_caps[t] = cap
+            else:
+                market_caps[t] = 10_000_000_000 # Proxy por si falla la API temporalmente
+        except Exception:
+            market_caps[t] = 10_000_000_000
             
-            # --- CÁLCULO DE INDICADORES ---
-            df_soxl['VWAP'] = calcular_vwap_diario(df_soxl)
-            df_soxl['ATR'] = calcular_atr(df_soxl, period=14)
-            df_soxl['EMA_9'] = df_soxl['Close'].ewm(span=9, adjust=False).mean()
-            df_soxl['EMA_21'] = df_soxl['Close'].ewm(span=21, adjust=False).mean()
+    # Ordenar de mayor a menor capitalización
+    ordenados = sorted(market_caps.items(), key=lambda item: item[1], reverse=True)
+    
+    pesos_calculados = {}
+    suma_inicial_top5 = sum([val for idx, (tk, val) in enumerate(ordenados) if idx < 5])
+    suma_inicial_resto = sum([val for idx, (tk, val) in enumerate(ordenados) if idx >= 5])
+    
+    for i, (ticker, cap_value) in enumerate(ordenados):
+        if i < 5:
+            peso_teorico = (cap_value / suma_inicial_top5) * 0.40
+            pesos_calculados[ticker] = min(peso_teorico, 0.08)
+        else:
+            peso_teorico = (cap_value / suma_inicial_resto) * 0.60
+            pesos_calculados[ticker] = min(peso_teorico, 0.04)
             
-            ema_12 = df_soxl['Close'].ewm(span=12, adjust=False).mean()
-            ema_26 = df_soxl['Close'].ewm(span=26, adjust=False).mean()
-            df_soxl['MACD_Line'] = ema_12 - ema_26
-            df_soxl['MACD_Signal'] = df_soxl['MACD_Line'].ewm(span=9, adjust=False).mean()
-            df_soxl['MACD_Hist'] = df_soxl['MACD_Line'] - df_soxl['MACD_Signal']
-            
-            df_soxl['qqq_trend_1m'] = df_qqq['Close'].pct_change(1)
-            df_soxl['nvda_trend_1m'] = df_nvda['Close'].pct_change(1)
-            df_soxl['aapl_trend_1m'] = df_aapl['Close'].pct_change(1)
-            df_soxl['msft_trend_1m'] = df_msft['Close'].pct_change(1)
-            
-            # --- MEJORA: REGULARIZACIÓN Y FEATURES RELATIVAS ---
-            df_soxl['dist_vwap'] = (df_soxl['Close'] - df_soxl['VWAP']) / df_soxl['ATR'].replace(0, 0.01)
-            df_soxl['dist_ema9_ema21'] = (df_soxl['EMA_9'] - df_soxl['EMA_21']) / df_soxl['ATR'].replace(0, 0.01)
-            df_soxl['nasdaq_trend_1h'] = df_nasdaq['Close'].pct_change(12)
-            df_soxl['vix_level'] = df_vix['Close']
-            df_soxl['minutos_desde_apertura'] = (df_soxl.index - df_soxl.index.normalize()).total_seconds() / 60.0 - 570.0
-            
-            # Predicción de cambio neto en lugar de valor absoluto copia
-            df_soxl['Target_10m'] = df_soxl['Close'].shift(-10) - df_soxl['Close']
-            
-            columnas_features = [
-                'Volume', 'dist_vwap', 'dist_ema9_ema21', 'MACD_Hist', 'vix_level', 
-                'minutos_desde_apertura', 'qqq_trend_1m', 'nvda_trend_1m', 'aapl_trend_1m', 'msft_trend_1m'
-            ]
-            
-            df_limpio = df_soxl[columnas_features + ['Target_10m']].dropna()
-            X = df_limpio[columnas_features]
-            y = df_limpio['Target_10m']
-            
-            if len(X) > 50:
-                params = {
-                    'objective': 'reg:squarederror', 'max_depth': 3, 'eta': 0.1,
-                    'subsample': 0.8, 'colsample_bytree': 0.8, 'reg_lambda': 1.0
-                }
-                dtrain = xgb.DMatrix(X, label=y)
-                model = xgb.train(params, dtrain, num_boost_round=30)
-                
-                ultimo_bloque = df_soxl[columnas_features].tail(1)
-                dlast = xgb.DMatrix(ultimo_bloque)
-                
-                preds["Actual"] = round(float(df_soxl['Close'].iloc[-1]), 2)
-                cambio_estimado = float(model.predict(dlast))
-                preds["Proyectado_Cambio_10m"] = round(cambio_estimado, 3)
-                preds["Tendencia"] = "Alza" if cambio_estimado > 0 else "Baja"
-                
-                ultimo_precio = preds["Actual"]
-                ultimo_vwap = round(float(df_soxl['VWAP'].iloc[-1]), 2)
-                ultima_ema9 = float(df_soxl['EMA_9'].iloc[-1])
-                ultima_ema21 = float(df_soxl['EMA_21'].iloc[-1])
-                ultimo_macd_hist = float(df_soxl['MACD_Hist'].iloc[-1])
-                ultimo_atr = float(df_soxl['ATR'].iloc[-1])
-                
-                preds["Sesgo_VWAP"] = "COMPRADORES" if ultimo_precio > ultimo_vwap else "VENDEDORES"
-                
-                if ultimo_precio > ultima_ema9 and ultima_ema9 > ultima_ema21 and ultimo_macd_hist > 0:
-                    preds["Impulso"] = "ALCISTA"
-                elif ultimo_precio < ultima_ema9 and ultima_ema9 < ultima_ema21 and ultimo_macd_hist < 0:
-                    preds["Impulso"] = "BAJISTA"
-                else:
-                    preds["Impulso"] = "COMPRESION"
-                    
-                ret_qqq = float(df_qqq['Close'].pct_change(1).iloc[-1])
-                ret_nvda = float(df_nvda['Close'].pct_change(1).iloc[-1])
-                ret_aapl = float(df_aapl['Close'].pct_change(1).iloc[-1])
-                ret_msft = float(df_msft['Close'].pct_change(1).iloc[-1])
-                
-                coincidencia_alcista = ret_qqq > 0 and ret_nvda > 0 and ret_aapl > 0 and ret_msft > 0
-                coincidencia_bajista = ret_qqq < 0 and ret_nvda < 0 and ret_aapl < 0 and ret_msft < 0
-                rango_vela_actual = np.abs(float(df_soxl['Close'].iloc[-1]) - float(df_soxl['Open'].iloc[-1]))
-                
-                if coincidencia_alcista and rango_vela_actual > (ultimo_atr * 1.2):
-                    preds["Senal_Alerta"] = "RUPTURA_ALCISTA"
-                elif coincidencia_bajista and rango_vela_actual > (ultimo_atr * 1.2):
-                    preds["Senal_Alerta"] = "RUPTURA_BAJISTA"
-                else:
-                    preds["Senal_Alerta"] = "NORMAL"
-                
-                preds["Nivel_Nasdaq"] = round(float(df_nasdaq_raw['Close'].iloc[-1]), 2)
-                preds["Nivel_VIX"] = round(float(df_vix_raw['Close'].iloc[-1]), 2)
-                es_real = True
-        except Exception as e:
-            print(f"❌ Error en procesamiento técnico interno: {e}")
-            
-    # --- BLINDAJE DE ESCRITURA ---
+    # Normalizar para asegurar que la suma exacta dé 1.0 (100%)
+    total_pesos = sum(pesos_calculados.values())
+    for ticker in pesos_calculados:
+        pesos_calculados[ticker] /= total_pesos
+        
+    return pesos_calculados
+
+def calcular_manual():
+    ahora = datetime.now(ny_tz)
+    hora_actual = ahora.hour * 60 + ahora.minute
+    apertura = 9*60 + 30
+    cierre = 16*60
+    
+    if hora_actual < apertura or hora_actual >= cierre:
+        print("[INFO] Fuera de horario de mercado, no se envía alerta.")
+        return
+
+    # 1. Obtener los pesos dinámicos del índice real
+    pesos_reales = calcular_pesos_reales_indice()
+
     try:
-        pred_df = pd.DataFrame([preds], index=[id_registro])
-        file_exists = os.path.exists(csv_filename)
-        pred_df.to_csv(csv_filename, mode='a', header=not file_exists)
-        print("💾 Fila guardada con éxito en el historial.")
-    except Exception as csv_err:
-        print(f"⚠️ Alerta CSV (Abierto en Excel): {csv_err}")
+        soxl_data = yf.download("SOXL", period="1d", interval="1m", group_by="ticker", progress=False)
+        time.sleep(1)
+        datos = yf.download(tickers, period="1d", interval="1m", group_by="ticker", progress=False)
+        time.sleep(1)
+        diarios = yf.download(["SOXL"] + tickers, period="7d", interval="1d", group_by="ticker", progress=False)
+    except Exception as e:
+        enviar_alerta(f"❌ Error al descargar datos: {e}")
+        return
+
+    df_soxl = soxl_data["SOXL"] if isinstance(soxl_data.columns, pd.MultiIndex) else soxl_data
+    if df_soxl.empty:
+        enviar_alerta("❌ Datos de SOXL vacíos.")
+        return
+
+    # Extracción segura controlando Series
+    p_real_val = df_soxl.iloc[-1]["Close"]
+    precio_real = float(p_real_val.iloc[0] if isinstance(p_real_val, pd.Series) else p_real_val)
+    if pd.isna(precio_real) or precio_real == 0:
+        enviar_alerta("❌ Precio real inválido.")
+        return
+
+    p_open_val = df_soxl.iloc[0]["Open"]
+    precio_open_soxl = float(p_open_val.iloc[0] if isinstance(p_open_val, pd.Series) else p_open_val)
+    if pd.isna(precio_open_soxl) or precio_open_soxl == 0:
+        enviar_alerta("❌ Apertura inválida de SOXL.")
+        return
+
+    df_soxl_diario = diarios["SOXL"] if isinstance(diarios.columns, pd.MultiIndex) else diarios
+    df_soxl_diario = df_soxl_diario.dropna(subset=["Close"])
+    df_prev = df_soxl_diario[df_soxl_diario.index.date < ahora.date()]
+    if df_prev.empty:
+        enviar_alerta("❌ No hay cierre anterior válido para SOXL.")
+        return
+        
+    p_cierre_val = df_prev.iloc[-1]["Close"]
+    cierre_prev_soxl = float(p_cierre_val.iloc[0] if isinstance(p_cierre_val, pd.Series) else p_cierre_val)
+    alto_prev_val = df_prev.iloc[-1]["High"]
+    alto_prev_soxl = float(alto_prev_val.iloc[0] if isinstance(alto_prev_val, pd.Series) else alto_prev_val)
+    bajo_prev_val = df_prev.iloc[-1]["Low"]
+    bajo_prev_soxl = float(bajo_prev_val.iloc[0] if isinstance(bajo_prev_val, pd.Series) else bajo_prev_val)
+
+    # 2. Puntos Pivote (Soporte y Resistencia)
+    pivot = (alto_prev_soxl + bajo_prev_soxl + cierre_prev_soxl) / 3
+    r1 = (2 * pivot) - bajo_prev_soxl
+    s1 = (2 * pivot) - alto_prev_soxl
+    r2 = pivot + (alto_prev_soxl - bajo_prev_soxl)
+    s2 = pivot - (alto_prev_soxl - bajo_prev_soxl)
+
+    variaciones, suma_pesos = [], 0.0
+    componentes_msg = ""
     
-    hora_actual = datetime.datetime.now().strftime("%I:%M %p")
-    tipo_data = "Modelado Cuantitativo Relativo Abierto" if es_real else "⚠️ Valores de Contingencia"
-    icon_tendencia = "🟢" if preds["Tendencia"] == "Alza" else "🔴"
-    signo_cambio = "+" if preds["Proyectado_Cambio_10m"] > 0 else ""
+    # 3. Procesar las variaciones ponderadas
+    for t in tickers:
+        try:
+            df_intradia = datos[t] if isinstance(datos.columns, pd.MultiIndex) else datos
+            df_diario = diarios[t] if isinstance(diarios.columns, pd.MultiIndex) else diarios
+            if df_intradia.empty or df_diario.empty: continue
+            df_diario = df_diario.dropna(subset=["Close"])
+            df_prev_t = df_diario[df_diario.index.date < ahora.date()]
+            if df_prev_t.empty: continue
+            
+            p_momento = df_intradia.iloc[-1]["Close"]
+            c_prev = df_prev_t.iloc[-1]["Close"]
+            precio_momento = float(p_momento.iloc[0] if isinstance(p_momento, pd.Series) else p_momento)
+            cierre_prev = float(c_prev.iloc[0] if isinstance(c_prev, pd.Series) else c_prev)
+            
+            if pd.isna(precio_momento) or pd.isna(cierre_prev) or cierre_prev == 0: continue
+            
+            var_pct = ((precio_momento - cierre_prev) / cierre_prev) * 100
+            variaciones.append(var_pct * pesos_reales[t])
+            suma_pesos += pesos_reales[t]
+            
+            # Formatear el desglose de los 4 principales
+            if t in ["NVDA", "MU", "AMD", "AVGO"]:
+                signo = "+" if var_pct >= 0 else ""
+                componentes_msg += f"   • {t} ({pesos_reales[t]*100:.1f}%): ${precio_momento:.2f} ({signo}{var_pct:.2f}%)\n"
+        except Exception:
+            continue
+
+    if suma_pesos == 0:
+        enviar_alerta("❌ No se pudo calcular variaciones.")
+        return
+
+    var_total = sum(variaciones) / suma_pesos
+
+    precio_estimado_close = cierre_prev_soxl * (1 + (var_total * 3)/100)
+    desviacion_close = ((precio_estimado_close - precio_real) / precio_real) * 100
+
+    precio_estimated_open = precio_open_soxl * (1 + (var_total * 3)/100)
+    desviacion_open = ((precio_estimated_open - precio_real) / precio_real) * 100
+
+    # 4. Construcción del Mensaje Unificado para Telegram
+    signo_c = "+" if desviacion_close >= 0 else ""
+    signo_o = "+" if desviacion_open >= 0 else ""
     
-    with open("telegram_scalper_msg.txt", "w", encoding="utf-8") as f:
-        f.write(
-            f"⚡ *PRO-SCALPER CUANTITATIVO* ({hora_actual} EST)\n"
-            f"🔹 Estado: {tipo_data}\n"
-            f"{icon_tendencia} Dirección Estimada (10m): {preds['Tendencia']}\n\n"
-            f"💵 Precio Actual SOXL: ${preds['Actual']}\n"
-            f"🎯 Variación de IA Esperada: {signo_cambio}${preds['Proyectado_Cambio_10m']}\n\n"
-            f"📊 Estrategia Des-correlacionada (VWAP):\n"
-            f"▪️ Control del Día: {preds['Sesgo_VWAP']}\n"
-            f"▪️ Impulso Reciente: {preds['Impulso']}\n\n"
-            f"📈 Entorno Macro Sincronizado:\n"
-            f"▪️ Nasdaq: {preds['Nivel_Nasdaq']} pts\n"
-            f"▪️ Índice VIX: {preds['Nivel_VIX']}\n\n"
-            f"🚨 Filtro de Rupturas Avanzado (ATR 14):\n"
-            f"▪️ {preds['Senal_Alerta']}\n"
-            )
+    mensaje = (
+        f"📊 *SOXL Monitor Automático*\n\n"
+        f"💵 *Precio Real SOXL:* {precio_real:.2f}\n\n"
+        f"📈 *Basado en Cierre Anterior*\n"
+        f"   🔹 Estimado: {precio_estimado_close:.2f}\n"
+        f"   🔹 Desviación: {signo_c}{desviacion_close:.2f}%\n\n"
+        f"📉 *Basado en Apertura del Día*\n"
+        f"   🔹 Estimado: {precio_estimated_open:.2f}\n"
+        f"   🔹 Desviación: {signo_o}{desviacion_open:.2f}%\n\n"
+        f"🧱 *Niveles Técnicos Clave:*\n"
+        f"   🔺 R2: {r2:.2f} | R1: {r1:.2f}\n"
+        f"   ⚪ Pivot: {pivot:.2f}\n"
+        f"   🔻 S1: {s1:.2f} | S2: {s2:.2f}\n\n"
+        f"🔍 *Desglose de Componentes Top:*\n"
+        f"{componentes_msg}"
+    )
+    
+    enviar_alerta(mensaje)
+
+    with open("soxl_intradia_manual_unificado.txt", "w") as f:
+        f.write(mensaje)
+
 if __name__ == "__main__":
-    run_scalper()
+    calcular_manual()
