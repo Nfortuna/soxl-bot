@@ -16,7 +16,6 @@ tickers = [
 ny_tz = pytz.timezone("America/New_York")
 
 def enviar_alerta(mensaje):
-    # Verificación e impresión preventiva en la consola de GitHub
     if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "":
         print("[ALERTA CRÍTICA] El secreto 'TELEGRAM_TOKEN' está vacío o no está configurado en GitHub Secrets.")
         return
@@ -25,7 +24,6 @@ def enviar_alerta(mensaje):
         return
         
     try:
-        # Construcción segura de la URL oficial de la API de Telegram
         url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
         resp = requests.post(url, data={
             "chat_id": CHAT_ID,
@@ -39,10 +37,6 @@ def enviar_alerta(mensaje):
         print(f"[ERROR] Error de conexión con Telegram: {e}")
 
 def calcular_pesos_reales_indice():
-    """
-    Calcula dinámicamente el peso según las reglas del ICE Semiconductor Index:
-    Top 5 empresas capadas al 8% máximo. Las otras 25 capadas al 4% máximo.
-    """
     market_caps = {}
     print("[INFO] Sincronizando pesos reales basados en Capitalización de Mercado...")
     
@@ -57,8 +51,7 @@ def calcular_pesos_reales_indice():
         except Exception:
             market_caps[t] = 10_000_000_000
             
-    # Ordenar de mayor a menor capitalización
-    ordenados = sorted(market_caps.items(), key=lambda item: item, reverse=True)
+    ordenados = sorted(market_caps.items(), key=lambda item: item[1], reverse=True)
     
     pesos_calculados = {}
     suma_inicial_top5 = sum([val for idx, (tk, val) in enumerate(ordenados) if idx < 5])
@@ -105,14 +98,15 @@ def calcular_manual():
         enviar_alerta("❌ Datos de SOXL vacíos.")
         return
 
-    p_real_val = df_soxl.iloc[-1]["Close"]
-    precio_real = float(p_real_val.iloc if isinstance(p_real_val, pd.Series) else p_real_val)
+    # CORRECCIÓN DE INDEXACIÓN CON .iloc CORRECTO
+    p_real_val = df_soxl["Close"].iloc[-1]
+    precio_real = float(p_real_val.iloc[0] if isinstance(p_real_val, pd.Series) else p_real_val)
     if pd.isna(precio_real) or precio_real == 0:
         enviar_alerta("❌ Precio real inválido.")
         return
 
-    p_open_val = df_soxl.iloc["Open"]
-    precio_open_soxl = float(p_open_val.iloc if isinstance(p_open_val, pd.Series) else p_open_val)
+    p_open_val = df_soxl["Open"].iloc[0]
+    precio_open_soxl = float(p_open_val.iloc[0] if isinstance(p_open_val, pd.Series) else p_open_val)
 
     df_soxl_diario = diarios["SOXL"] if isinstance(diarios.columns, pd.MultiIndex) else diarios
     df_soxl_diario = df_soxl_diario.dropna(subset=["Close"])
@@ -121,12 +115,14 @@ def calcular_manual():
         enviar_alerta("❌ No hay cierre anterior válido para SOXL.")
         return
         
-    p_cierre_val = df_prev.iloc[-1]["Close"]
-    cierre_prev_soxl = float(p_cierre_val.iloc if isinstance(p_cierre_val, pd.Series) else p_cierre_val)
-    alto_prev_val = df_prev.iloc[-1]["High"]
-    alto_prev_soxl = float(alto_prev_val.iloc if isinstance(alto_prev_val, pd.Series) else alto_prev_val)
-    bajo_prev_val = df_prev.iloc[-1]["Low"]
-    bajo_prev_soxl = float(bajo_prev_val.iloc if isinstance(bajo_prev_val, pd.Series) else bajo_prev_val)
+    p_cierre_val = df_prev["Close"].iloc[-1]
+    cierre_prev_soxl = float(p_cierre_val.iloc[0] if isinstance(p_cierre_val, pd.Series) else p_cierre_val)
+    
+    alto_prev_val = df_prev["High"].iloc[-1]
+    alto_prev_soxl = float(alto_prev_val.iloc[0] if isinstance(alto_prev_val, pd.Series) else alto_prev_val)
+    
+    bajo_prev_val = df_prev["Low"].iloc[-1]
+    bajo_prev_soxl = float(bajo_prev_val.iloc[0] if isinstance(bajo_prev_val, pd.Series) else bajo_prev_val)
 
     pivot = (alto_prev_soxl + bajo_prev_soxl + cierre_prev_soxl) / 3
     r1 = (2 * pivot) - bajo_prev_soxl
@@ -146,10 +142,10 @@ def calcular_manual():
             df_prev_t = df_diario[df_diario.index.date < ahora.date()]
             if df_prev_t.empty: continue
             
-            p_momento = df_intradia.iloc[-1]["Close"]
-            c_prev = df_prev_t.iloc[-1]["Close"]
-            precio_momento = float(p_momento.iloc if isinstance(p_momento, pd.Series) else p_momento)
-            cierre_prev = float(c_prev.iloc if isinstance(c_prev, pd.Series) else c_prev)
+            p_momento = df_intradia["Close"].iloc[-1]
+            c_prev = df_prev_t["Close"].iloc[-1]
+            precio_momento = float(p_momento.iloc[0] if isinstance(p_momento, pd.Series) else p_momento)
+            cierre_prev = float(c_prev.iloc[0] if isinstance(c_prev, pd.Series) else c_prev)
             
             if pd.isna(precio_momento) or pd.isna(cierre_prev) or cierre_prev == 0: continue
             
