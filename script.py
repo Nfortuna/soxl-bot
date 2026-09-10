@@ -3,7 +3,7 @@ import pandas as pd
 import os, requests, pytz, time
 from datetime import datetime
 
-# LÍNEA CORREGIDA: Paréntesis de cierre añadido al final
+# Captura limpia de secretos desde el entorno de GitHub
 TELEGRAM_TOKEN = str(os.getenv("TELEGRAM_TOKEN", "")).strip()
 CHAT_ID = str(os.getenv("TELEGRAM_CHAT_ID", "")).strip()
 
@@ -17,15 +17,21 @@ ny_tz = pytz.timezone("America/New_York")
 
 def enviar_alerta(mensaje):
     if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "":
-        print("[ALERTA CRÍTICA] El secreto 'TELEGRAM_TOKEN' está vacío en GitHub Secrets.")
+        print("[ALERTA] El secreto 'TELEGRAM_TOKEN' no fue detectado por el entorno.")
         return
     if not CHAT_ID or CHAT_ID == "":
-        print("[ALERTA CRÍTICA] El secreto 'TELEGRAM_CHAT_ID' está vacío en GitHub Secrets.")
+        print("[ALERTA] El secreto 'TELEGRAM_CHAT_ID' no fue detectado por el entorno.")
         return
         
     try:
-        url = "https://telegram.org" + TELEGRAM_TOKEN + "/sendMessage"
-        resp = requests.post(url, data={
+        # CONSTRUCCIÓN TOTALMENTE SEGMENTADA PARA EVITAR LECTURA DE TEXTO ANTERIOR
+        subdominio = "api."
+        dominio_base = "telegram.org"
+        endpoint = "/bot" + TELEGRAM_TOKEN + "/sendMessage"
+        
+        url_final = "https://" + subdominio + dominio_base + endpoint
+        
+        resp = requests.post(url_final, data={
             "chat_id": CHAT_ID,
             "text": mensaje,
             "parse_mode": "Markdown"
@@ -34,7 +40,7 @@ def enviar_alerta(mensaje):
         if resp.status_code != 200:
             print(f"[ERROR] API de Telegram rechazó el mensaje: {resp.text}")
         else:
-            print("[ÉXITO] ¡Mensaje enviado correctamente a Telegram!")
+            print("[ÉXITO] ¡Conexión establecida y mensaje enviado correctamente!")
     except Exception as e:
         print(f"[ERROR] Error de conexión con Telegram: {e}")
 
@@ -106,7 +112,7 @@ def calcular_manual():
         enviar_alerta("❌ Precio real inválido.")
         return
 
-    p_open_val = df_soxl["Open"].iloc[0]
+    p_open_val = df_soxl["Open"].iloc
     precio_open_soxl = float(p_open_val.iloc if isinstance(p_open_val, pd.Series) else p_open_val)
 
     df_soxl_diario = diarios["SOXL"] if isinstance(diarios.columns, pd.MultiIndex) else diarios
