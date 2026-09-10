@@ -2,10 +2,8 @@ name: SOXL Scalper Bot Automático
 
 on:
   schedule:
-    # Corre de lunes a viernes cada 5 minutos entre las 13:00 y las 21:00 UTC
-    # Esto cubre perfectamente el horario de mercado de Nueva York (9:30 AM - 4:00 PM EST)
     - cron: '*/5 13-21 * * 1-5'
-  workflow_dispatch: # Permite que puedas ejecutar el bot manualmente con un botón cuando quieras
+  workflow_dispatch: 
 
 jobs:
   run-scalper:
@@ -13,13 +11,12 @@ jobs:
 
     steps:
     - name: Clonar el Repositorio
-      uses: actions/checkout@v4 # Forzado nativamente a Node 24 estable
+      uses: actions/checkout@v4 
 
     - name: Configurar Entorno de Python
-      uses: actions/setup-python@v5 # Corre sobre entornos actualizados
+      uses: actions/setup-python@v5 
       with:
-        python-version: '3.11'
-        cache: 'pip' # Acelera la descarga al guardar dependencias en caché
+        python-version: '3.11' # Se eliminó la línea de caché para solucionar el error
 
     - name: Instalar Dependencias del Mercado
       run: |
