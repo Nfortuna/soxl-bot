@@ -3,9 +3,9 @@ import pandas as pd
 import os, requests, pytz, time
 from datetime import datetime
 
-# Limpieza preventiva de variables de entorno
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+# Limpieza y captura estricta de las variables de entorno
+TELEGRAM_TOKEN = str(os.getenv("TELEGRAM_TOKEN", "")).strip()
+CHAT_ID = str(os.getenv("TELEGRAM_CHAT_ID", "")).strip()
 
 tickers = [
     "NVDA","AVGO","MU","AMD","AMAT","MRVL","INTC","KLAC","MPWR","TER","ADI","NXPI",
@@ -24,8 +24,9 @@ def enviar_alerta(mensaje):
         return
         
     try:
-        # CORRECCIÓN CRÍTICA: Se añade 'api.' a la URL oficial de Telegram
-        url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
+        # CONCATENACIÓN DIRECTA Y FORZADA A LA API OFICIAL
+        url = "https://telegram.org" + TELEGRAM_TOKEN + "/sendMessage"
+        
         resp = requests.post(url, data={
             "chat_id": CHAT_ID,
             "text": mensaje,
@@ -34,21 +35,33 @@ def enviar_alerta(mensaje):
         
         if resp.status_code != 200:
             print(f"[ERROR] API de Telegram rechazó el mensaje: {resp.text}")
+        else:
+            print("[ÉXITO] ¡Mensaje enviado correctamente a Telegram!")
     except Exception as e:
         print(f"[ERROR] Error de conexión con Telegram: {e}")
 
 def calcular_pesos_reales_indice():
+    """
+    Calcula dinámicamente el peso según las reglas del ICE Semiconductor Index:
+    Top 5 empresas capadas al 8% máximo. Las otras 25 capadas al 4% máximo.
+    """
     market_caps = {}
     print("[INFO] Sincronizando pesos reales basados en Capitalización de Mercado...")
+    
     for t in tickers:
         try:
             info = yf.Ticker(t).info
             cap = info.get("marketCap", 0)
-            market_caps[t] = cap if cap > 0 else 10_000_000_000
+            if cap > 0:
+                market_caps[t] = cap
+            else:
+                market_caps[t] = 10_000_000_000
         except Exception:
             market_caps[t] = 10_000_000_000
             
-    ordenados = sorted(market_caps.items(), key=lambda item: item[1], reverse=True)
+    # Ordenar de mayor a menor capitalización
+    ordenados = sorted(market_caps.items(), key=lambda item: item, reverse=True)
+    
     pesos_calculados = {}
     suma_inicial_top5 = sum([val for idx, (tk, val) in enumerate(ordenados) if idx < 5])
     suma_inicial_resto = sum([val for idx, (tk, val) in enumerate(ordenados) if idx >= 5])
@@ -64,6 +77,7 @@ def calcular_pesos_reales_indice():
     total_pesos = sum(pesos_calculados.values())
     for ticker in pesos_calculados:
         pesos_calculados[ticker] /= total_pesos
+        
     return pesos_calculados
 
 def calcular_manual():
@@ -93,11 +107,15 @@ def calcular_manual():
         enviar_alerta("❌ Datos de SOXL vacíos.")
         return
 
+    # Extracción por etiqueta nativa de Pandas
     p_real_val = df_soxl["Close"].iloc[-1]
-    precio_real = float(p_real_val.iloc[0] if isinstance(p_real_val, pd.Series) else p_real_val)
-    
-    p_open_val = df_soxl["Open"].iloc[0]
-    precio_open_soxl = float(p_open_val.iloc[0] if isinstance(p_open_val, pd.Series) else p_open_val)
+    precio_real = float(p_real_val.iloc if isinstance(p_real_val, pd.Series) else p_real_val)
+    if pd.isna(precio_real) or precio_real == 0:
+        enviar_alerta("❌ Precio real inválido.")
+        return
+
+    p_open_val = df_soxl["Open"].iloc
+    precio_open_soxl = float(p_open_val.iloc if isinstance(p_open_val, pd.Series) else p_open_val)
 
     df_soxl_diario = diarios["SOXL"] if isinstance(diarios.columns, pd.MultiIndex) else diarios
     df_soxl_diario = df_soxl_diario.dropna(subset=["Close"])
@@ -107,11 +125,11 @@ def calcular_manual():
         return
         
     p_cierre_val = df_prev["Close"].iloc[-1]
-    cierre_prev_soxl = float(p_cierre_val.iloc[0] if isinstance(p_cierre_val, pd.Series) else p_cierre_val)
+    cierre_prev_soxl = float(p_cierre_val.iloc if isinstance(p_cierre_val, pd.Series) else p_cierre_val)
     alto_prev_val = df_prev["High"].iloc[-1]
-    alto_prev_soxl = float(alto_prev_val.iloc[0] if isinstance(alto_prev_val, pd.Series) else alto_prev_val)
+    alto_prev_soxl = float(alto_prev_val.iloc if isinstance(alto_prev_val, pd.Series) else alto_prev_val)
     bajo_prev_val = df_prev["Low"].iloc[-1]
-    bajo_prev_soxl = float(bajo_prev_val.iloc[0] if isinstance(bajo_prev_val, pd.Series) else bajo_prev_val)
+    bajo_prev_soxl = float(bajo_prev_val.iloc if isinstance(bajo_prev_val, pd.Series) else bajo_prev_val)
 
     pivot = (alto_prev_soxl + bajo_prev_soxl + cierre_prev_soxl) / 3
     r1 = (2 * pivot) - bajo_prev_soxl
@@ -133,8 +151,8 @@ def calcular_manual():
             
             p_momento = df_intradia["Close"].iloc[-1]
             c_prev = df_prev_t["Close"].iloc[-1]
-            precio_momento = float(p_momento.iloc[0] if isinstance(p_momento, pd.Series) else p_momento)
-            cierre_prev = float(c_prev.iloc[0] if isinstance(c_prev, pd.Series) else c_prev)
+            precio_momento = float(p_momento.iloc if isinstance(p_momento, pd.Series) else p_momento)
+            cierre_prev = float(c_prev.iloc if isinstance(c_prev, pd.Series) else c_prev)
             
             if pd.isna(precio_momento) or pd.isna(cierre_prev) or cierre_prev == 0: continue
             
@@ -153,8 +171,10 @@ def calcular_manual():
         return
 
     var_total = sum(variaciones) / suma_pesos
+
     precio_estimado_close = cierre_prev_soxl * (1 + (var_total * 3)/100)
     desviacion_close = ((precio_estimado_close - precio_real) / precio_real) * 100
+
     precio_estimated_open = precio_open_soxl * (1 + (var_total * 3)/100)
     desviacion_open = ((precio_estimated_open - precio_real) / precio_real) * 100
 
@@ -177,6 +197,7 @@ def calcular_manual():
         f"🔍 *Desglose de Componentes Top:*\n"
         f"{componentes_msg}"
     )
+    
     enviar_alerta(mensaje)
 
 if __name__ == "__main__":
