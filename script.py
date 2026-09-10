@@ -24,11 +24,10 @@ def enviar_alerta(mensaje):
         return
         
     try:
-        # CONSTRUCCIÓN TOTALMENTE SEGMENTADA PARA EVITAR LECTURA DE TEXTO ANTERIOR
+        # Construcción segmentada segura para la API oficial de Telegram
         subdominio = "api."
         dominio_base = "telegram.org"
         endpoint = "/bot" + TELEGRAM_TOKEN + "/sendMessage"
-        
         url_final = "https://" + subdominio + dominio_base + endpoint
         
         resp = requests.post(url_final, data={
@@ -106,13 +105,15 @@ def calcular_manual():
         enviar_alerta("❌ Datos de SOXL vacíos.")
         return
 
+    # Extracción por etiqueta nativa de Pandas
     p_real_val = df_soxl["Close"].iloc[-1]
     precio_real = float(p_real_val.iloc if isinstance(p_real_val, pd.Series) else p_real_val)
     if pd.isna(precio_real) or precio_real == 0:
         enviar_alerta("❌ Precio real inválido.")
         return
 
-    p_open_val = df_soxl["Open"].iloc
+    # CORRECCIÓN DE INDEXACIÓN DEFINITIVA: Se añade el [0] para tomar el valor de apertura inicial
+    p_open_val = df_soxl["Open"].iloc[0]
     precio_open_soxl = float(p_open_val.iloc if isinstance(p_open_val, pd.Series) else p_open_val)
 
     df_soxl_diario = diarios["SOXL"] if isinstance(diarios.columns, pd.MultiIndex) else diarios
